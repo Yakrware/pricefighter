@@ -86,6 +86,12 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
+    // CameraX (Camera tab preview + capture).
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
     // Local-only persistence for the price-check history.
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)

@@ -19,6 +19,7 @@ jsoup = "1.18.3"
 coroutines = "1.9.0"
 junit = "4.13.2"
 cronet = "143.7445.0"
+camerax = "1.4.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -48,6 +49,11 @@ jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 # Chromium's network stack as an HTTP client — presents Chrome's TLS/HTTP-2 fingerprint
 # so eBay's anti-bot (Akamai) does not 403 the request the way it does plain OkHttp.
 cronet-embedded = { group = "org.chromium.net", name = "cronet-embedded", version.ref = "cronet" }
+
+androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
+androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
+androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
+androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 

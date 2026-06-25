@@ -103,12 +103,32 @@ app/src/main/java/com/pricefighter/
 │  ├─ ebay/EbayClient.kt        Fetch (via a PageFetcher) → parsed results
 │  ├─ ebay/PageFetcher.kt       PageFetcher interface + OkHttpPageFetcher (JVM/tests)
 │  ├─ ebay/CronetPageFetcher.kt On-device fetch via Cronet (Chrome fingerprint) + cookies
+│  ├─ ebay/SoldWindow.kt        Pages the last-30-days sold window (majority-older stop)
 │  ├─ stats/PriceStats.kt       Range / average / median / velocity
 │  ├─ db/History.kt             Room entity + DAO + database (local-only)
 │  └─ repo/PriceCheckRepository.kt  Single source of truth (UI + functions)
-└─ ui/                          Jetpack Compose history + instructions screen
-app/src/test/java/com/pricefighter/   JVM unit tests (parser + stats)
+└─ ui/                          Jetpack Compose UI
+   ├─ MainScreen.kt             Bottom tab bar: History / How to / Camera
+   ├─ HistoryTab.kt             Accordion history (one card open at a time)
+   ├─ HowToScreen.kt            Usage directions (voice / text / photo)
+   └─ CameraScreen.kt           CameraX capture → hands the photo to Gemini
+app/src/test/java/com/pricefighter/   JVM unit tests (parser + stats + URL + window)
 ```
+
+## App UI
+
+Three tabs (bottom navigation):
+
+- **History** (default) — past price checks. **One card is expanded at a time**: the most
+  recent is open by default with full details; the rest collapse to a one-line summary
+  (item + price range). Tapping a card opens it and closes the previously open one.
+- **How to** — directions for asking Gemini by voice, text, or photo.
+- **Camera** — a live CameraX preview with a shutter. Snapping a photo captures it and
+  hands it to the **Gemini app** (`ACTION_SEND` image + a price-check prompt, falling back
+  to the system chooser), where Gemini identifies the item and runs the price-check skill.
+
+All interaction that produces a report still flows through Gemini; the camera is just a
+fast on-ramp to "ask Gemini about this thing in front of me."
 
 ---
 
