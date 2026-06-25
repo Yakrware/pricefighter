@@ -1,0 +1,14 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Auto-generated Gradle daemon JVM criteria (regenerate with: ./gradlew updateDaemonJvm)
+gradle/gradle-daemon-jvm.properties
