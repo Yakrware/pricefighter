@@ -265,4 +265,7 @@ adb shell 'cmd app_function execute-app-function --package com.pricefighter \
 - **App Functions is alpha** and **Gemini end-to-end is preview/EAP-gated** (see above).
 - Photo → model-number recognition is performed by **Gemini**, not the app; the app
   receives an already-resolved item/model string.
-```
+
+## License
+
+[MIT](LICENSE) © Yakrware. Open source — contributions welcome via pull request.
