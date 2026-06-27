@@ -16,7 +16,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             PriceFighterTheme {
                 val viewModel: MainViewModel = viewModel(factory = MainViewModel.factory(repository))
-                HistoryScreen(viewModel = viewModel)
+                MainScreen(viewModel = viewModel)
             }
         }
     }

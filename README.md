@@ -103,12 +103,42 @@ app/src/main/java/com/pricefighter/
 │  ├─ ebay/EbayClient.kt        Fetch (via a PageFetcher) → parsed results
 │  ├─ ebay/PageFetcher.kt       PageFetcher interface + OkHttpPageFetcher (JVM/tests)
 │  ├─ ebay/CronetPageFetcher.kt On-device fetch via Cronet (Chrome fingerprint) + cookies
+│  ├─ ebay/SoldWindow.kt        Pages the last-30-days sold window (majority-older stop)
+│  ├─ vision/ProductIdentifier.kt  On-device barcode → OCR → Gemini Nano identification
 │  ├─ stats/PriceStats.kt       Range / average / median / velocity
 │  ├─ db/History.kt             Room entity + DAO + database (local-only)
 │  └─ repo/PriceCheckRepository.kt  Single source of truth (UI + functions)
-└─ ui/                          Jetpack Compose history + instructions screen
-app/src/test/java/com/pricefighter/   JVM unit tests (parser + stats)
+└─ ui/                          Jetpack Compose UI
+   ├─ MainScreen.kt             Bottom tab bar: History / How to / Camera
+   ├─ HistoryTab.kt             Accordion history (one card open at a time)
+   ├─ HowToScreen.kt            Usage directions (voice / text / photo)
+   ├─ CameraScreen.kt           CameraX capture → identify on-device → price check
+   └─ CameraViewModel.kt        Capture state machine (Working / Success / fallback)
+app/src/test/java/com/pricefighter/   JVM unit tests (parser + stats + URL + window)
 ```
+
+## App UI
+
+Three tabs (bottom navigation):
+
+- **History** (default) — past price checks. **One card is expanded at a time**: the most
+  recent is open by default with full details; the rest collapse to a one-line summary
+  (item + price range). Tapping a card opens it and closes the previously open one.
+- **How to** — directions for asking Gemini by voice, text, or photo.
+- **Camera** — a live CameraX preview with a shutter. Snapping a photo identifies the item
+  **on-device** and prices it without leaving the app (a loading indicator runs meanwhile).
+  The identifier is a fall-through chain:
+  1. **Barcode** (ML Kit) → a UPC/EAN, which eBay can search directly.
+  2. **Label OCR** (ML Kit) → a model-number token read off the item.
+  3. **Gemini Nano** (ML Kit GenAI Prompt API) → on-device multimodal identification, but
+     only where the model is available (`checkStatus() == AVAILABLE`); skipped otherwise.
+  4. **Fallback** — if nothing on-device can identify it, hand the photo to the **Gemini app**
+     (`ACTION_SEND` image + prompt, falling back to the system chooser).
+
+  When a tier identifies the item, the app runs its **own** `priceCheck()` (no Gemini round-trip
+  needed) and the report lands in History. Note: Gemini Nano (tier 3) is gated to recent
+  flagship devices and an experimental beta SDK, runs only while the app is foreground
+  (`BACKGROUND_USE_BLOCKED` otherwise), and is not available on the emulator.
 
 ---
 
