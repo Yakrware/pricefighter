@@ -92,6 +92,11 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
 
+    // On-device product identification (barcode → OCR → Gemini Nano).
+    implementation(libs.mlkit.barcode)
+    implementation(libs.mlkit.text.recognition)
+    implementation(libs.mlkit.genai.prompt)
+
     // Local-only persistence for the price-check history.
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)

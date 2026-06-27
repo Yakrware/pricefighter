@@ -70,7 +70,10 @@ fun MainScreen(viewModel: MainViewModel) {
             )
 
             PfTab.HowTo -> HowToScreen(contentPadding = padding)
-            PfTab.Camera -> CameraScreen(contentPadding = padding)
+            PfTab.Camera -> CameraScreen(
+                contentPadding = padding,
+                onOpenHistory = { tab = PfTab.History },
+            )
         }
     }
 }
