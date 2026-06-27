@@ -10,6 +10,7 @@ import com.pricefighter.data.vision.ProductIdentifier
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -27,6 +28,16 @@ sealed interface CaptureState {
     data class NeedsGemini(val message: String) : CaptureState
 
     data class Error(val message: String) : CaptureState
+}
+
+/** One capture within a continuous-mode session. */
+data class CaptureItem(val id: Long, val status: ItemStatus)
+
+sealed interface ItemStatus {
+    data object Working : ItemStatus
+    data class Done(val report: PriceReport, val via: String) : ItemStatus
+    data object Unidentified : ItemStatus
+    data object Failed : ItemStatus
 }
 
 class CameraViewModel(
@@ -59,6 +70,39 @@ class CameraViewModel(
 
     fun reset() {
         _state.value = CaptureState.Idle
+    }
+
+    // ---- Continuous mode: each snap runs its lookup in the background; results accumulate. ----
+
+    private val _items = MutableStateFlow<List<CaptureItem>>(emptyList())
+    val items: StateFlow<List<CaptureItem>> = _items.asStateFlow()
+    private var nextItemId = 0L
+
+    /** Snap-and-keep-going: identify + price in the background without blocking the camera. */
+    fun captureContinuous(file: File) {
+        val id = nextItemId++
+        _items.update { it + CaptureItem(id, ItemStatus.Working) }
+        viewModelScope.launch {
+            val identification = runCatching { identifier.identify(file) }.getOrNull()
+            if (identification == null) {
+                // No app-switch in continuous mode — just flag it so the flow isn't interrupted.
+                updateItem(id, ItemStatus.Unidentified)
+                return@launch
+            }
+            val report = runCatching { repository.priceCheck(identification.searchTerm, "") }.getOrNull()
+            updateItem(
+                id,
+                if (report != null) ItemStatus.Done(report, identification.via) else ItemStatus.Failed,
+            )
+        }
+    }
+
+    fun clearSession() {
+        _items.value = emptyList()
+    }
+
+    private fun updateItem(id: Long, status: ItemStatus) {
+        _items.update { list -> list.map { if (it.id == id) it.copy(status = status) else it } }
     }
 
     companion object {
