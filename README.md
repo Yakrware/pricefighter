@@ -112,8 +112,8 @@ app/src/main/java/com/pricefighter/
    ├─ MainScreen.kt             Bottom tab bar: History / How to / Camera
    ├─ HistoryTab.kt             Accordion history (one card open at a time)
    ├─ HowToScreen.kt            Usage directions (voice / text / photo)
-   ├─ CameraScreen.kt           CameraX capture → identify on-device → price check
-   └─ CameraViewModel.kt        Capture state machine (Working / Success / fallback)
+   ├─ CameraScreen.kt           CameraX capture, Single/Continuous modes, results UI
+   └─ CameraViewModel.kt        Single-shot state machine + continuous-session results
 app/src/test/java/com/pricefighter/   JVM unit tests (parser + stats + URL + window)
 ```
 
@@ -139,6 +139,14 @@ Three tabs (bottom navigation):
   needed) and the report lands in History. Note: Gemini Nano (tier 3) is gated to recent
   flagship devices and an experimental beta SDK, runs only while the app is foreground
   (`BACKGROUND_USE_BLOCKED` otherwise), and is not available on the emulator.
+
+  A **Single | Continuous** selector switches capture modes:
+  - **Single** — snap one item, watch a loading indicator while it's identified and priced,
+    then a result card (*Snap another* / *See in History*).
+  - **Continuous** — keep snapping; each photo's lookup runs in the background while you shoot
+    the next. A counter tracks progress; **Done** opens the session's results list (each row is
+    the item + average price, or "scanning…" / "couldn't identify"). Unidentifiable photos are
+    flagged rather than interrupting the flow with the Gemini hand-off.
 
 ---
 

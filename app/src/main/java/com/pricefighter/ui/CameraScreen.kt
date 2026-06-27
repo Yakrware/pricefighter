@@ -19,20 +19,29 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,6 +51,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,11 +72,12 @@ import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
-/** Gemini app package; tier-4 fallback shares the photo here with a price-check prompt. */
 private const val GEMINI_PACKAGE = "com.google.android.apps.bard"
 private const val PRICE_CHECK_PROMPT =
     "Price check this item. Identify the product and its model number, then run a price check " +
         "and report the typical sold price."
+
+private enum class CameraMode { Single, Continuous }
 
 @Composable
 fun CameraScreen(
@@ -78,7 +89,9 @@ fun CameraScreen(
     val app = remember(context) { context.applicationContext as PriceFighterApp }
     val identifier = remember { ProductIdentifier(app) }
     val viewModel: CameraViewModel = viewModel(factory = CameraViewModel.factory(app.repository, identifier))
-    val state by viewModel.state.collectAsStateWithLifecycle()
+    val singleState by viewModel.state.collectAsStateWithLifecycle()
+    val items by viewModel.items.collectAsStateWithLifecycle()
+    var mode by rememberSaveable { mutableStateOf(CameraMode.Single) }
     var lastFile by remember { mutableStateOf<File?>(null) }
 
     var hasPermission by remember {
@@ -91,9 +104,9 @@ fun CameraScreen(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> hasPermission = granted }
 
-    // Tier 4: nothing identified on-device → hand the photo to the Gemini app.
-    LaunchedEffect(state) {
-        if (state is CaptureState.NeedsGemini) {
+    // Single mode only: nothing identified on-device → hand the photo to the Gemini app.
+    LaunchedEffect(singleState, mode) {
+        if (mode == CameraMode.Single && singleState is CaptureState.NeedsGemini) {
             lastFile?.let { shareToGemini(context, it) }
             viewModel.reset()
         }
@@ -109,9 +122,20 @@ fun CameraScreen(
     ) {
         if (hasPermission) {
             CameraCaptureView(
-                state = state,
-                onCaptured = { file -> lastFile = file; viewModel.onPhotoCaptured(file) },
-                onReset = viewModel::reset,
+                mode = mode,
+                onModeChange = { mode = it },
+                singleState = singleState,
+                items = items,
+                onCaptured = { file ->
+                    if (mode == CameraMode.Single) {
+                        lastFile = file
+                        viewModel.onPhotoCaptured(file)
+                    } else {
+                        viewModel.captureContinuous(file)
+                    }
+                },
+                onResetSingle = viewModel::reset,
+                onClearSession = viewModel::clearSession,
                 onOpenHistory = onOpenHistory,
             )
         } else {
@@ -122,9 +146,13 @@ fun CameraScreen(
 
 @Composable
 private fun CameraCaptureView(
-    state: CaptureState,
+    mode: CameraMode,
+    onModeChange: (CameraMode) -> Unit,
+    singleState: CaptureState,
+    items: List<CaptureItem>,
     onCaptured: (File) -> Unit,
-    onReset: () -> Unit,
+    onResetSingle: () -> Unit,
+    onClearSession: () -> Unit,
     onOpenHistory: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -134,6 +162,7 @@ private fun CameraCaptureView(
     }
     val imageCapture = remember { ImageCapture.Builder().build() }
     var provider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+    var reviewing by remember(mode) { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         val cameraProvider = context.awaitCameraProvider()
@@ -141,57 +170,135 @@ private fun CameraCaptureView(
         val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
         runCatching {
             cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
-                lifecycleOwner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                imageCapture,
-            )
+            cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
         }.onFailure {
             Toast.makeText(context, "Couldn't start the camera: ${it.message}", Toast.LENGTH_LONG).show()
         }
     }
     DisposableEffect(Unit) { onDispose { provider?.unbindAll() } }
 
+    val capture: () -> Unit = {
+        capturePhoto(
+            context = context,
+            imageCapture = imageCapture,
+            onSaved = onCaptured,
+            onError = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() },
+        )
+    }
+
     Box(Modifier.fillMaxSize()) {
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
 
-        when (state) {
-            is CaptureState.Idle -> {
-                Surface(
-                    modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                    tonalElevation = 3.dp,
-                ) {
-                    Text(
-                        "Snap an item — it’ll be identified and priced",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                    )
+        when (mode) {
+            CameraMode.Single -> when (val s = singleState) {
+                is CaptureState.Idle -> ReadyChrome(mode, onModeChange) {
+                    Hint("Snap an item — it’ll be identified and priced")
+                    ShutterButton("Price check a photo", onClick = capture)
                 }
-                Button(
-                    onClick = {
-                        capturePhoto(
-                            context = context,
-                            imageCapture = imageCapture,
-                            onSaved = onCaptured,
-                            onError = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() },
-                        )
-                    },
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 28.dp),
-                ) {
-                    Icon(Icons.Filled.PhotoCamera, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Price check a photo")
-                }
+                is CaptureState.Working -> WorkingOverlay(s.step)
+                is CaptureState.NeedsGemini -> WorkingOverlay(s.message)
+                is CaptureState.Success -> ResultOverlay(s, onOpenHistory = onOpenHistory, onReset = onResetSingle)
+                is CaptureState.Error -> ErrorOverlay(s.message, onReset = onResetSingle)
             }
 
-            is CaptureState.Working -> WorkingOverlay(state.step)
-            is CaptureState.NeedsGemini -> WorkingOverlay(state.message)
-            is CaptureState.Success -> ResultOverlay(state, onOpenHistory = onOpenHistory, onReset = onReset)
-            is CaptureState.Error -> ErrorOverlay(state.message, onReset = onReset)
+            CameraMode.Continuous -> if (reviewing) {
+                ContinuousResults(
+                    items = items,
+                    onKeepScanning = { reviewing = false },
+                    onDone = {
+                        onClearSession()
+                        reviewing = false
+                        onOpenHistory()
+                    },
+                )
+            } else {
+                ReadyChrome(mode, onModeChange) {
+                    if (items.isNotEmpty()) SessionCounter(items)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ShutterButton("Snap", onClick = capture)
+                        Spacer(Modifier.width(12.dp))
+                        Button(onClick = { reviewing = true }, enabled = items.isNotEmpty()) {
+                            Text("Done (${items.size})")
+                        }
+                    }
+                }
+            }
         }
+    }
+}
+
+/** Shared chrome for the "ready to snap" states: the mode selector on top, [content] at the bottom. */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.ReadyChrome(
+    mode: CameraMode,
+    onModeChange: (CameraMode) -> Unit,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    ModeSelector(
+        mode = mode,
+        onModeChange = onModeChange,
+        modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+    )
+    Column(
+        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        content = content,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModeSelector(mode: CameraMode, onModeChange: (CameraMode) -> Unit, modifier: Modifier = Modifier) {
+    SingleChoiceSegmentedButtonRow(modifier) {
+        SegmentedButton(
+            selected = mode == CameraMode.Single,
+            onClick = { onModeChange(CameraMode.Single) },
+            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+        ) { Text("Single") }
+        SegmentedButton(
+            selected = mode == CameraMode.Continuous,
+            onClick = { onModeChange(CameraMode.Continuous) },
+            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+        ) { Text("Continuous") }
+    }
+}
+
+@Composable
+private fun Hint(text: String) {
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+        tonalElevation = 3.dp,
+    ) {
+        Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+    }
+}
+
+@Composable
+private fun ShutterButton(label: String, onClick: () -> Unit) {
+    Button(onClick = onClick) {
+        Icon(Icons.Filled.PhotoCamera, contentDescription = null)
+        Spacer(Modifier.width(8.dp))
+        Text(label)
+    }
+}
+
+@Composable
+private fun SessionCounter(items: List<CaptureItem>) {
+    val priced = items.count { it.status is ItemStatus.Done }
+    val working = items.count { it.status is ItemStatus.Working }
+    val label = buildString {
+        append("${items.size} snapped")
+        if (priced > 0) append(" · $priced priced")
+        if (working > 0) append(" · $working scanning")
+    }
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+        tonalElevation = 3.dp,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
     }
 }
 
@@ -220,11 +327,7 @@ private fun ResultOverlay(state: CaptureState.Success, onOpenHistory: () -> Unit
                 Text(report.searchTerm, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text("identified via ${state.via}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    Format.money(report.averagePrice, report.currency),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                )
+                Text(Format.money(report.averagePrice, report.currency), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text("average sold price", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -233,7 +336,7 @@ private fun ResultOverlay(state: CaptureState.Success, onOpenHistory: () -> Unit
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(18.dp))
-                androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = onReset) { Text("Snap another") }
                     Spacer(Modifier.width(8.dp))
                     Button(onClick = onOpenHistory) { Text("See in History") }
@@ -262,18 +365,71 @@ private fun ErrorOverlay(message: String, onReset: () -> Unit) {
 }
 
 @Composable
+private fun ContinuousResults(items: List<CaptureItem>, onKeepScanning: () -> Unit, onDone: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Card(Modifier.padding(16.dp).fillMaxWidth().fillMaxHeight(0.75f)) {
+            Column(Modifier.padding(20.dp)) {
+                Text("Results (${items.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    items(items, key = { it.id }) { item ->
+                        ResultRow(item)
+                        HorizontalDivider()
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onKeepScanning) { Text("Keep scanning") }
+                    Spacer(Modifier.weight(1f))
+                    Button(onClick = onDone) { Text("Done") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResultRow(item: CaptureItem) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        when (val status = item.status) {
+            is ItemStatus.Working -> {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(12.dp))
+                Text("Scanning…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            is ItemStatus.Done -> {
+                Column(Modifier.weight(1f)) {
+                    Text(status.report.searchTerm, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1)
+                    Text("via ${status.via}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(
+                    Format.money(status.report.averagePrice, status.report.currency),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            is ItemStatus.Unidentified ->
+                Text("Couldn’t identify this one", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            is ItemStatus.Failed ->
+                Text("Price check failed", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+@Composable
 private fun CameraPermissionPrompt(onRequest: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(
-            Icons.Filled.PhotoCamera,
-            contentDescription = null,
-            modifier = Modifier.size(48.dp),
-            tint = MaterialTheme.colorScheme.primary,
-        )
+        Icon(Icons.Filled.PhotoCamera, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(16.dp))
         Text("Camera access needed", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
@@ -293,12 +449,7 @@ private suspend fun Context.awaitCameraProvider(): ProcessCameraProvider = suspe
     future.addListener({ cont.resume(future.get()) }, ContextCompat.getMainExecutor(this))
 }
 
-private fun capturePhoto(
-    context: Context,
-    imageCapture: ImageCapture,
-    onSaved: (File) -> Unit,
-    onError: (String) -> Unit,
-) {
+private fun capturePhoto(context: Context, imageCapture: ImageCapture, onSaved: (File) -> Unit, onError: (String) -> Unit) {
     val dir = File(context.cacheDir, "captures").apply { mkdirs() }
     val file = File(dir, "pricecheck_${System.currentTimeMillis()}.jpg")
     val options = ImageCapture.OutputFileOptions.Builder(file).build()
@@ -307,13 +458,12 @@ private fun capturePhoto(
         ContextCompat.getMainExecutor(context),
         object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) = onSaved(file)
-            override fun onError(exception: ImageCaptureException) =
-                onError("Couldn't capture photo: ${exception.message}")
+            override fun onError(exception: ImageCaptureException) = onError("Couldn't capture photo: ${exception.message}")
         },
     )
 }
 
-/** Tier 4: hand the photo to the Gemini app; fall back to the system chooser. */
+/** Tier 4 (single mode): hand the photo to the Gemini app; fall back to the system chooser. */
 private fun shareToGemini(context: Context, file: File) {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     val base = Intent(Intent.ACTION_SEND).apply {
@@ -325,8 +475,6 @@ private fun shareToGemini(context: Context, file: File) {
     try {
         context.startActivity(Intent(base).setPackage(GEMINI_PACKAGE))
     } catch (e: ActivityNotFoundException) {
-        context.startActivity(
-            Intent.createChooser(base, "Price check with…").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-        )
+        context.startActivity(Intent.createChooser(base, "Price check with…").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
     }
 }
