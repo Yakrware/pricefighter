@@ -130,8 +130,11 @@ Three tabs (bottom navigation):
   The identifier is a fall-through chain:
   1. **Barcode** (ML Kit) → a UPC/EAN, which eBay can search directly.
   2. **Label OCR** (ML Kit) → a model-number token read off the item.
-  3. **Gemini Nano** (ML Kit GenAI Prompt API) → on-device multimodal identification, but
-     only where the model is available (`checkStatus() == AVAILABLE`); skipped otherwise.
+  3. **Gemini Nano** (ML Kit GenAI Prompt API) → on-device multimodal identification on
+     supported devices. If the model isn't downloaded yet (`checkStatus() == DOWNLOADABLE`),
+     the app starts the **one-time model download** (kicked off proactively when the camera
+     opens) and uses Nano once it's `AVAILABLE`; until then it falls through. On a Galaxy
+     Z Fold 7 the download is ~12 MB / a couple seconds (the base model ships with AICore).
   4. **Fallback** — if nothing on-device can identify it, hand the photo to the **Gemini app**
      (`ACTION_SEND` image + prompt, falling back to the system chooser).
 
@@ -141,8 +144,10 @@ Three tabs (bottom navigation):
   (`BACKGROUND_USE_BLOCKED` otherwise), and is not available on the emulator.
 
   A **Single | Continuous** selector switches capture modes:
-  - **Single** — snap one item, watch a loading indicator while it's identified and priced,
-    then a result card (*Snap another* / *See in History*).
+  - **Single** — snap one item; the shot **freezes on screen** while it's identified and
+    priced. The loader can be **cancelled** (abort the lookup) or sent to the **background**
+    (the lookup keeps running and still saves its report to History while you snap the next).
+    On success, a result card over the frozen shot (*Snap another* / *See in History*).
   - **Continuous** — keep snapping; each photo's lookup runs in the background while you shoot
     the next. A counter tracks progress; **Done** opens the session's results list (each row is
     the item + average price, or "scanning…" / "couldn't identify"). Unidentifiable photos are
