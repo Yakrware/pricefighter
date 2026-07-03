@@ -5,6 +5,8 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,6 +16,7 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,6 +59,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -93,6 +98,8 @@ fun CameraScreen(
     val items by viewModel.items.collectAsStateWithLifecycle()
     var mode by rememberSaveable { mutableStateOf(CameraMode.Single) }
     var lastFile by remember { mutableStateOf<File?>(null) }
+    // The just-captured frame, shown frozen over the live preview while the lookup runs (single mode).
+    var frozenFrame by remember { mutableStateOf<Bitmap?>(null) }
 
     var hasPermission by remember {
         mutableStateOf(
@@ -118,6 +125,11 @@ fun CameraScreen(
         }
     }
 
+    // Unfreeze back to the live preview whenever single mode returns to idle.
+    LaunchedEffect(singleState, mode) {
+        if (mode != CameraMode.Single || singleState is CaptureState.Idle) frozenFrame = null
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -132,15 +144,18 @@ fun CameraScreen(
                 onModeChange = { mode = it },
                 singleState = singleState,
                 items = items,
+                frozenFrame = frozenFrame,
                 onCaptured = { file ->
                     if (mode == CameraMode.Single) {
                         lastFile = file
+                        frozenFrame = decodeForDisplay(file)
                         viewModel.onPhotoCaptured(file)
                     } else {
                         viewModel.captureContinuous(file)
                     }
                 },
                 onResetSingle = viewModel::reset,
+                onCancelSingle = viewModel::cancelSingle,
                 onClearSession = viewModel::clearSession,
                 onOpenHistory = onOpenHistory,
             )
@@ -156,8 +171,10 @@ private fun CameraCaptureView(
     onModeChange: (CameraMode) -> Unit,
     singleState: CaptureState,
     items: List<CaptureItem>,
+    frozenFrame: Bitmap?,
     onCaptured: (File) -> Unit,
     onResetSingle: () -> Unit,
+    onCancelSingle: () -> Unit,
     onClearSession: () -> Unit,
     onOpenHistory: () -> Unit,
 ) {
@@ -195,13 +212,27 @@ private fun CameraCaptureView(
     Box(Modifier.fillMaxSize()) {
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
 
+        // Freeze on the shot we just took (single mode) so you can see what was captured.
+        if (mode == CameraMode.Single && frozenFrame != null) {
+            Image(
+                bitmap = frozenFrame.asImageBitmap(),
+                contentDescription = "Captured photo",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        }
+
         when (mode) {
             CameraMode.Single -> when (val s = singleState) {
                 is CaptureState.Idle -> ReadyChrome(mode, onModeChange) {
                     Hint("Snap an item — it’ll be identified and priced")
                     ShutterButton("Price check a photo", onClick = capture)
                 }
-                is CaptureState.Working -> WorkingOverlay(s.step)
+                is CaptureState.Working -> SingleWorkingOverlay(
+                    step = s.step,
+                    onCancel = onCancelSingle,
+                    onBackground = onResetSingle,
+                )
                 is CaptureState.NeedsGemini -> WorkingOverlay(s.message)
                 is CaptureState.Success -> ResultOverlay(s, onOpenHistory = onOpenHistory, onReset = onResetSingle)
                 is CaptureState.Error -> ErrorOverlay(s.message, onReset = onResetSingle)
@@ -318,6 +349,26 @@ private fun WorkingOverlay(step: String) {
         CircularProgressIndicator(color = Color.White)
         Spacer(Modifier.height(16.dp))
         Text(step, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+/** Single-mode loader over the frozen shot: cancel the lookup, or let it finish in the background. */
+@Composable
+private fun SingleWorkingOverlay(step: String, onCancel: () -> Unit, onBackground: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        CircularProgressIndicator(color = Color.White)
+        Spacer(Modifier.height(16.dp))
+        Text(step, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(24.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onCancel) { Text("Cancel", color = Color.White) }
+            Spacer(Modifier.width(12.dp))
+            Button(onClick = onBackground) { Text("Snap another") }
+        }
     }
 }
 
@@ -448,6 +499,18 @@ private fun CameraPermissionPrompt(onRequest: () -> Unit) {
         Spacer(Modifier.height(20.dp))
         Button(onClick = onRequest) { Text("Enable camera") }
     }
+}
+
+/** Decodes the captured JPEG downsampled (~1280px) for the frozen-frame preview. */
+private fun decodeForDisplay(file: File): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(file.absolutePath, bounds)
+    if (bounds.outWidth <= 0) return null
+    var sample = 1
+    val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
+    while (maxDim / (sample * 2) >= 1280) sample *= 2
+    val options = BitmapFactory.Options().apply { inSampleSize = sample }
+    return runCatching { BitmapFactory.decodeFile(file.absolutePath, options) }.getOrNull()
 }
 
 private suspend fun Context.awaitCameraProvider(): ProcessCameraProvider = suspendCoroutine { cont ->

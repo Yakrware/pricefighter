@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pricefighter.data.model.PriceReport
 import com.pricefighter.data.repo.PriceCheckRepository
 import com.pricefighter.data.vision.ProductIdentifier
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,28 +49,55 @@ class CameraViewModel(
     private val _state = MutableStateFlow<CaptureState>(CaptureState.Idle)
     val state: StateFlow<CaptureState> = _state.asStateFlow()
 
+    private var singleJob: Job? = null
+
+    // Bumped whenever the visible lookup is dismissed (cancelled or sent to the background),
+    // so a still-running coroutine stops updating the on-screen state but keeps saving to
+    // History. Only the coroutine whose id still matches may touch [_state].
+    private var activeLookupId = 0L
+
     /** Runs the tier 1–3 identification then a price check on the captured photo. */
     fun onPhotoCaptured(file: File) {
+        val lookupId = ++activeLookupId
         _state.value = CaptureState.Working("Identifying…")
-        viewModelScope.launch {
+        singleJob = viewModelScope.launch {
             val identification = runCatching { identifier.identify(file) }.getOrNull()
             if (identification == null) {
-                _state.value = CaptureState.NeedsGemini("Couldn’t identify it on-device — opening Gemini…")
+                if (activeLookupId == lookupId) {
+                    _state.value = CaptureState.NeedsGemini("Couldn’t identify it on-device — opening Gemini…")
+                }
                 return@launch
             }
 
-            _state.value = CaptureState.Working("Pricing “${identification.searchTerm}”…")
+            if (activeLookupId == lookupId) {
+                _state.value = CaptureState.Working("Pricing “${identification.searchTerm}”…")
+            }
             val report = runCatching { repository.priceCheck(identification.searchTerm, "") }
                 .getOrElse {
-                    _state.value = CaptureState.Error("Price check failed: ${it.message}")
+                    if (activeLookupId == lookupId) {
+                        _state.value = CaptureState.Error("Price check failed: ${it.message}")
+                    }
                     return@launch
                 }
-            _state.value = CaptureState.Success(report, identification.via)
+            if (activeLookupId == lookupId) {
+                _state.value = CaptureState.Success(report, identification.via)
+            }
         }
     }
 
+    /**
+     * Return to the live camera. A still-running lookup keeps going in the background and
+     * still saves its report to History — it just stops driving the visible state.
+     */
     fun reset() {
+        activeLookupId++
         _state.value = CaptureState.Idle
+    }
+
+    /** Abort the in-flight lookup entirely and return to the live camera. */
+    fun cancelSingle() {
+        singleJob?.cancel()
+        reset()
     }
 
     // ---- Continuous mode: each snap runs its lookup in the background; results accumulate. ----

@@ -144,8 +144,10 @@ Three tabs (bottom navigation):
   (`BACKGROUND_USE_BLOCKED` otherwise), and is not available on the emulator.
 
   A **Single | Continuous** selector switches capture modes:
-  - **Single** — snap one item, watch a loading indicator while it's identified and priced,
-    then a result card (*Snap another* / *See in History*).
+  - **Single** — snap one item; the shot **freezes on screen** while it's identified and
+    priced. The loader can be **cancelled** (abort the lookup) or sent to the **background**
+    (the lookup keeps running and still saves its report to History while you snap the next).
+    On success, a result card over the frozen shot (*Snap another* / *See in History*).
   - **Continuous** — keep snapping; each photo's lookup runs in the background while you shoot
     the next. A counter tracks progress; **Done** opens the session's results list (each row is
     the item + average price, or "scanning…" / "couldn't identify"). Unidentifiable photos are
