@@ -104,6 +104,12 @@ fun CameraScreen(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> hasPermission = granted }
 
+    // Start the (one-time) Gemini Nano model download as soon as the camera is usable, so
+    // on-device identification is ready before the first snap instead of falling to Gemini.
+    LaunchedEffect(hasPermission) {
+        if (hasPermission) identifier.prepareNano()
+    }
+
     // Single mode only: nothing identified on-device → hand the photo to the Gemini app.
     LaunchedEffect(singleState, mode) {
         if (mode == CameraMode.Single && singleState is CaptureState.NeedsGemini) {

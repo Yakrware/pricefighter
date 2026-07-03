@@ -130,8 +130,11 @@ Three tabs (bottom navigation):
   The identifier is a fall-through chain:
   1. **Barcode** (ML Kit) → a UPC/EAN, which eBay can search directly.
   2. **Label OCR** (ML Kit) → a model-number token read off the item.
-  3. **Gemini Nano** (ML Kit GenAI Prompt API) → on-device multimodal identification, but
-     only where the model is available (`checkStatus() == AVAILABLE`); skipped otherwise.
+  3. **Gemini Nano** (ML Kit GenAI Prompt API) → on-device multimodal identification on
+     supported devices. If the model isn't downloaded yet (`checkStatus() == DOWNLOADABLE`),
+     the app starts the **one-time model download** (kicked off proactively when the camera
+     opens) and uses Nano once it's `AVAILABLE`; until then it falls through. On a Galaxy
+     Z Fold 7 the download is ~12 MB / a couple seconds (the base model ships with AICore).
   4. **Fallback** — if nothing on-device can identify it, hand the photo to the **Gemini app**
      (`ACTION_SEND` image + prompt, falling back to the system chooser).
 
