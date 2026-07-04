@@ -88,4 +88,56 @@ class EbayParserTest {
         assertEquals("2026-06-23", item.soldDateIso)
         assertEquals("https://www.ebay.com/itm/358702912755", item.itemUrl)
     }
+
+    // When eBay has no exact match it shows a "results matching fewer words" separator and then
+    // broadened suggestions. Those are not what was searched for and must never be priced.
+    private val rewriteHtml = """
+        <html><body>
+          <h1 class="srp-controls__count-heading"><span>1</span> result for xyzzy fghij</h1>
+          <ul class="srp-results srp-list">
+            <li class="s-item">
+              <a class="s-item__link" href="https://www.ebay.com/itm/111"></a>
+              <div class="s-item__title">Xyzzy Fghij Genuine Match</div>
+              <span class="s-item__price">${'$'}80.00</span>
+              <span class="s-item__caption--signal POSITIVE">Sold Jun 20, 2026</span>
+            </li>
+            <li class="srp-river-answer srp-river-answer--REWRITE_START">
+              <h2 class="srp-river-answer__title">Results matching fewer words</h2>
+            </li>
+            <li class="s-item">
+              <a class="s-item__link" href="https://www.ebay.com/itm/222"></a>
+              <div class="s-item__title">Totally Unrelated Broadened Result</div>
+              <span class="s-item__price">${'$'}5.00</span>
+            </li>
+          </ul>
+        </body></html>
+    """.trimIndent()
+
+    @Test
+    fun stopsAtTheFewerWordsSeparatorAndIgnoresBroadenedResults() {
+        val listings = EbayParser.parse(rewriteHtml).listings
+        assertEquals(1, listings.size)
+        assertEquals("Xyzzy Fghij Genuine Match", listings[0].title)
+    }
+
+    private val noExactMatchHtml = """
+        <html><body>
+          <h1 class="srp-controls__count-heading"><span>0</span> results for asdfgh qwerty</h1>
+          <div class="srp-save-null-search">
+            <h3 class="srp-save-null-search__heading">No exact matches found</h3>
+          </div>
+          <ul class="srp-results srp-list">
+            <li class="s-item">
+              <a class="s-item__link" href="https://www.ebay.com/itm/333"></a>
+              <div class="s-item__title">Something Broadened And Wrong</div>
+              <span class="s-item__price">${'$'}9.99</span>
+            </li>
+          </ul>
+        </body></html>
+    """.trimIndent()
+
+    @Test
+    fun returnsNoListingsWhenThereAreNoExactMatches() {
+        assertTrue(EbayParser.parse(noExactMatchHtml).listings.isEmpty())
+    }
 }

@@ -28,12 +28,15 @@ import kotlin.coroutines.resumeWithException
 data class Identification(val searchTerm: String, val via: String)
 
 /**
- * Identifies a product from a photo, fully on-device, trying cheap/universal methods first:
+ * Identifies a product from a photo, fully on-device. The goal is a **brand + model** an eBay
+ * search can use, so it tries the most reliable identifiers first:
  *
  *  1. **Barcode** (ML Kit) — a UPC/EAN is a precise product key eBay can search directly.
- *  2. **Label OCR** (ML Kit) — read a model-number-looking token off the item.
- *  3. **Gemini Nano** (ML Kit GenAI Prompt API) — multimodal identification for messy/unlabeled
- *     items, but only on supported devices (`checkStatus() == AVAILABLE`); skipped otherwise.
+ *  2. **Gemini Nano** (ML Kit GenAI Prompt API) — multimodal brand-and-model identification, our
+ *     primary identifier on supported devices (`checkStatus() == AVAILABLE`); skipped otherwise.
+ *  3. **Labeled model number** (ML Kit OCR) — only pulled when the item explicitly labels it
+ *     ("Model", "M/N", …). We deliberately do NOT grab arbitrary alphanumeric tokens: a random
+ *     code or serial off the packaging makes a useless search, so we only use one we're sure of.
  *
  * Returns null when nothing on-device could identify it — the caller then falls back to handing
  * the photo to the full Gemini app (tier 4).
@@ -62,8 +65,8 @@ class ProductIdentifier(context: Context) {
         val image = InputImage.fromBitmap(bitmap, 0)
 
         barcode(image)?.let { return Identification(it, "barcode") }
-        labelModelNumber(image)?.let { return Identification(it, "label text") }
         nano(bitmap)?.let { return Identification(it, "Gemini Nano") }
+        labelModelNumber(image)?.let { return Identification(it, "label text") }
         return null
     }
 
@@ -128,16 +131,23 @@ class ProductIdentifier(context: Context) {
         private var nanoDownloadStarted = false
         private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+        // A model number is only trustworthy when the item explicitly labels it. Matches
+        // "Model", "Model No/Number/#", "M/N", "Type" (any case) followed by the token, so a
+        // random code or serial elsewhere on the packaging is never picked up.
+        private val LABELED_MODEL = Regex(
+            """(?i)\b(?:model(?:\s*(?:no\.?|number|name|#))?|m/?n|type)\s*[:#.\-]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{3,19})""",
+        )
+
         /**
-         * Picks the most model-number-like token from OCR text: mixes letters and digits, 4–20
-         * chars (e.g. "WH-1000XM5", "HEG-001"). Returns the longest such token, or null.
+         * Reads a model number from OCR text **only when it's explicitly labeled** (e.g.
+         * "Model WH-1000XM5", "M/N: A2338"). The token must mix letters and digits so a labeled
+         * plain word or price is ignored. Returns null when nothing is confidently labeled — we'd
+         * rather fall through to Gemini than search a made-up token.
          */
         fun extractModelNumber(text: String): String? =
-            Regex("[A-Za-z0-9][A-Za-z0-9-]{3,19}")
-                .findAll(text)
-                .map { it.value }
-                .filter { token -> token.any(Char::isDigit) && token.any(Char::isLetter) }
-                .maxByOrNull { it.length }
+            LABELED_MODEL.findAll(text)
+                .map { it.groupValues[1].trim('-', '/', '.', ' ') }
+                .firstOrNull { token -> token.any(Char::isDigit) && token.any(Char::isLetter) }
     }
 }
 

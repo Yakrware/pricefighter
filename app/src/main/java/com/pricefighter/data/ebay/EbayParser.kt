@@ -26,6 +26,13 @@ object EbayParser {
     private val SOLD_DATE = Pattern.compile("Sold\\s+([A-Za-z]{3}\\s+\\d{1,2},\\s+\\d{4})")
     private val DATE_FMT = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
 
+    // eBay renders broadened "we found nothing exact, here's what's close" suggestions after one
+    // of these separators. Everything past it is NOT what the user searched for and must not be
+    // priced — so we stop parsing cards at the first of these markers.
+    private const val REWRITE_MARKER_SELECTOR =
+        ".srp-river-answer--REWRITE_START, .srp-save-null-search, .srp-save-null-search__heading"
+    private val REWRITE_MARKER_TEXT = Pattern.compile("(?i)(no exact matches|matching fewer words)")
+
     fun parse(html: String): ParsedPage {
         val doc = Jsoup.parse(html)
         return ParsedPage(parseTotal(doc), parseListings(doc))
@@ -42,12 +49,22 @@ object EbayParser {
     }
 
     private fun parseListings(doc: Document): List<EbayListing> {
-        val items = doc.select("li.s-item")
-            .ifEmpty { doc.select("li.s-card") }
-            .ifEmpty { doc.select(".s-item__wrapper") }
-        val out = ArrayList<EbayListing>(items.size)
-        for (el in items) {
-            runCatching { parseItem(el) }.getOrNull()?.let { out.add(it) }
+        // Which card markup this page uses (eBay is mid-migration from s-item to s-card).
+        val cardSelector = when {
+            doc.selectFirst("li.s-item") != null -> "li.s-item"
+            doc.selectFirst("li.s-card") != null -> "li.s-card"
+            doc.selectFirst(".s-item__wrapper") != null -> ".s-item__wrapper"
+            else -> return emptyList()
+        }
+
+        // Walk the page in document order and stop at the "no exact matches / results matching
+        // fewer words" separator — cards after it are broadened suggestions, not real matches.
+        val out = ArrayList<EbayListing>()
+        for (el in doc.allElements) {
+            if (el.`is`(REWRITE_MARKER_SELECTOR) || REWRITE_MARKER_TEXT.matcher(el.ownText()).find()) break
+            if (el.`is`(cardSelector)) {
+                runCatching { parseItem(el) }.getOrNull()?.let { out.add(it) }
+            }
         }
         return out
     }

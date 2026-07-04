@@ -48,7 +48,7 @@ class PriceCheckAgent(
         // A single page of the most recent sold listings — a sample small enough for Nano to judge
         // title by title, yet large enough for a representative price picture.
         val sold = repository.searchSold(query, page = 1).listings
-        if (sold.isEmpty()) error("No recent sold listings found for “$query”.")
+        if (sold.isEmpty()) error("No sold matches found for “$query” — try the exact brand and model.")
         val active = repository.searchActive(query)
 
         progress.onStep("Sorting good matches from bad…")
