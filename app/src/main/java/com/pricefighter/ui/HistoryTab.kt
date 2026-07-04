@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
@@ -33,6 +35,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -59,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.pricefighter.data.db.HistoryEntity
+import com.pricefighter.data.db.IncludedListing
 import com.pricefighter.data.ebay.EbayUrls
 
 /** Sentinel for "the user collapsed the open card, so nothing is expanded". */
@@ -333,6 +337,10 @@ private fun HistoryRow(
                     StatRow("Active listings", entry.activeListings.takeIf { it >= 0 }?.toString() ?: "—")
                     StatRow("Lowest active", Format.money(entry.lowestActivePrice, currency))
 
+                    if (entry.included.isNotEmpty()) {
+                        IncludedListingsSection(entry.included, currency)
+                    }
+
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         EbayLinkButton("Sold", entry.soldDeeplink)
@@ -345,6 +353,81 @@ private fun HistoryRow(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * A tappable row that opens the sold listings that fed this estimate in a scrollable popup — a
+ * debugging aid, so it's collapsed to a single line and never shown expanded by default.
+ */
+@Composable
+private fun IncludedListingsSection(listings: List<IncludedListing>, currency: String) {
+    var show by rememberSaveable { mutableStateOf(false) }
+
+    Spacer(Modifier.height(8.dp))
+    HorizontalDivider()
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { show = true }.padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Included in estimate (${listings.size})",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(Icons.Filled.ExpandMore, contentDescription = "Show the listings used")
+    }
+
+    if (show) {
+        AlertDialog(
+            onDismissRequest = { show = false },
+            confirmButton = { TextButton(onClick = { show = false }) { Text("Close") } },
+            title = { Text("Included in estimate (${listings.size})") },
+            text = {
+                // Bounded + lazy so a long list scrolls inside the dialog instead of growing it.
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                    items(listings) { IncludedRow(it, currency) }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun IncludedRow(item: IncludedListing, currency: String) {
+    val context = LocalContext.current
+    val clickable = if (item.itemUrl.isBlank()) {
+        Modifier
+    } else {
+        Modifier.clickable { context.startActivity(Intent(Intent.ACTION_VIEW, item.itemUrl.toUri())) }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().then(clickable).padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            Format.money(item.price, currency),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.widthIn(min = 76.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                item.title,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            item.soldDateIso?.let {
+                Text(
+                    "sold $it",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

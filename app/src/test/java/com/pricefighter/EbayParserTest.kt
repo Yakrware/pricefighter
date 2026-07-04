@@ -140,4 +140,41 @@ class EbayParserTest {
     fun returnsNoListingsWhenThereAreNoExactMatches() {
         assertTrue(EbayParser.parse(noExactMatchHtml).listings.isEmpty())
     }
+
+    // Empty-box and parts-only listings are often listed under normal conditions with the tell in
+    // the title, so eBay's condition filter misses them — the parser must drop them by title.
+    private val boxAndPartsHtml = """
+        <html><body>
+          <h1 class="srp-controls__count-heading"><span>4</span> results for sony wh-1000xm5</h1>
+          <ul class="srp-results srp-list">
+            <li class="s-item">
+              <a class="s-item__link" href="https://www.ebay.com/itm/1"></a>
+              <div class="s-item__title">Sony WH-1000XM5 Wireless Headphones Black</div>
+              <span class="s-item__price">${'$'}200.00</span>
+            </li>
+            <li class="s-item">
+              <a class="s-item__link" href="https://www.ebay.com/itm/2"></a>
+              <div class="s-item__title">Sony WH-1000XM5 Box Only No Headphones</div>
+              <span class="s-item__price">${'$'}25.00</span>
+            </li>
+            <li class="s-item">
+              <a class="s-item__link" href="https://www.ebay.com/itm/3"></a>
+              <div class="s-item__title">Sony WH-1000XM5 For Parts Not Working</div>
+              <span class="s-item__price">${'$'}45.00</span>
+            </li>
+            <li class="s-item">
+              <a class="s-item__link" href="https://www.ebay.com/itm/4"></a>
+              <div class="s-item__title">Sony WH-1000XM5 Replacement Case Only</div>
+              <span class="s-item__price">${'$'}18.00</span>
+            </li>
+          </ul>
+        </body></html>
+    """.trimIndent()
+
+    @Test
+    fun dropsBoxOnlyAndPartsOnlyListings() {
+        val listings = EbayParser.parse(boxAndPartsHtml).listings
+        assertEquals(1, listings.size)
+        assertEquals("Sony WH-1000XM5 Wireless Headphones Black", listings[0].title)
+    }
 }
