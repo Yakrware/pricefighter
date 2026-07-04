@@ -147,9 +147,10 @@ Three tabs (bottom navigation):
      download** (kicked off proactively when the camera opens) and uses Nano once it's `AVAILABLE`;
      until then it falls through. On a Galaxy Z Fold 7 the download is ~12 MB / a couple seconds
      (the base model ships with AICore).
-  3. **Labeled model number** — offline fallback (when Nano is unavailable) that mines the *same*
-     OCR text for an explicitly labeled model ("Model", "M/N", …). Arbitrary tokens are never
-     used: a random code or serial off the packaging makes a useless search.
+  3. **Labeled identifier** — offline fallback (when Nano is unavailable) that mines the *same*
+     OCR text for an explicitly labeled identifier: a model/part number ("Model", "M/N", "P/N", …)
+     is preferred, else a labeled serial ("S/N", "Serial", …). Unlabeled tokens are never used —
+     the label is what makes it safe to trust, so a random code off the packaging is ignored.
   4. **Fallback** — if nothing on-device can identify it, hand the photo to the **Gemini app**
      (`ACTION_SEND` image + prompt, falling back to the system chooser).
 

@@ -37,9 +37,10 @@ data class Identification(val searchTerm: String, val via: String)
  *     We OCR the item first (tier 2.5 below) and feed that text into Nano's prompt: a small model
  *     is far better at *classifying* strings it's handed ("WH-1000XM5 is the model, this is a
  *     serial") than at reading them off pixels.
- *  3. **Labeled model number** — the offline fallback when Nano isn't available, using the same
- *     OCR text. Only pulled when the item explicitly labels it ("Model", "M/N", …); we never grab
- *     an arbitrary token, because a random code or serial makes a useless search.
+ *  3. **Labeled identifier** — the offline fallback when Nano isn't available, using the same OCR
+ *     text. Pulled only when the item explicitly labels it: a model/part number ("Model", "M/N",
+ *     "P/N", …) is preferred, else a labeled serial ("S/N", "Serial", …). We never grab an
+ *     arbitrary token — the label is what makes it safe to trust.
  *
  * Returns null when nothing on-device could identify it — the caller then falls back to handing
  * the photo to the full Gemini app (tier 4).
@@ -74,7 +75,7 @@ class ProductIdentifier(context: Context) {
         val ocrText = readAllText(image)
 
         nano(bitmap, ocrText)?.let { return Identification(it, "Gemini Nano") }
-        extractModelNumber(ocrText)?.let { return Identification(it, "label text") }
+        extractLabeledId(ocrText)?.let { return Identification(it, "label text") }
         return null
     }
 
@@ -152,7 +153,8 @@ class ProductIdentifier(context: Context) {
                 "An OCR reader found this text on the item — it may include serial numbers, lot/" +
                 "batch codes, store labels, or unrelated words, so use judgement:\n" +
                 "\"\"\"\n$clipped\n\"\"\"\n" +
-                "Using the photo together with that text, $ask Ignore serial numbers and codes."
+                "Using the photo together with that text, $ask A bare serial number identifies one " +
+                "unit, not the model — don't return it as the model."
         }
 
         // App-lifetime scope for the one-time Gemini Nano model download.
@@ -160,23 +162,30 @@ class ProductIdentifier(context: Context) {
         private var nanoDownloadStarted = false
         private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-        // A model number is only trustworthy when the item explicitly labels it. Matches
-        // "Model", "Model No/Number/#", "M/N", "Type" (any case) followed by the token, so a
-        // random code or serial elsewhere on the packaging is never picked up.
+        // An identifier is only trustworthy when the item explicitly labels it, so a random code
+        // elsewhere on the packaging is never picked up. A model/part number is the better search
+        // term, but a labeled serial is a real identifier too — we just have to be *sure* it's one.
         private val LABELED_MODEL = Regex(
-            """(?i)\b(?:model(?:\s*(?:no\.?|number|name|#))?|m/?n|type)\s*[:#.\-]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{3,19})""",
+            """(?i)\b(?:model(?:\s*(?:no\.?|number|name|#))?|m/?n|type|part(?:\s*(?:no\.?|number|#))?|p/?n)\s*[:#.\-]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{3,19})""",
+        )
+        private val LABELED_SERIAL = Regex(
+            """(?i)\b(?:serial(?:\s*(?:no\.?|number|#))?|s/?n)\s*[:#.\-]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{4,23})""",
         )
 
         /**
-         * Reads a model number from OCR text **only when it's explicitly labeled** (e.g.
-         * "Model WH-1000XM5", "M/N: A2338"). The token must mix letters and digits so a labeled
-         * plain word or price is ignored. Returns null when nothing is confidently labeled — we'd
-         * rather fall through to Gemini than search a made-up token.
+         * Reads an identifier from OCR text **only when it's explicitly labeled** — a model/part
+         * number ("Model WH-1000XM5", "M/N: A2338", "P/N …") is preferred, falling back to a
+         * labeled serial ("S/N: …", "Serial …"). The token must contain a digit so a labeled plain
+         * word is ignored. Returns null when nothing is confidently labeled — we'd rather fall
+         * through to Gemini than search a made-up token.
          */
-        fun extractModelNumber(text: String): String? =
-            LABELED_MODEL.findAll(text)
+        fun extractLabeledId(text: String): String? =
+            firstLabeledToken(LABELED_MODEL, text) ?: firstLabeledToken(LABELED_SERIAL, text)
+
+        private fun firstLabeledToken(label: Regex, text: String): String? =
+            label.findAll(text)
                 .map { it.groupValues[1].trim('-', '/', '.', ' ') }
-                .firstOrNull { token -> token.any(Char::isDigit) && token.any(Char::isLetter) }
+                .firstOrNull { token -> token.length >= 4 && token.any(Char::isDigit) }
     }
 }
 
