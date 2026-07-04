@@ -59,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.pricefighter.data.db.HistoryEntity
+import com.pricefighter.data.ebay.EbayUrls
 
 /** Sentinel for "the user collapsed the open card, so nothing is expanded". */
 private const val COLLAPSED = Long.MIN_VALUE
@@ -283,7 +284,6 @@ private fun HistoryRow(
     onToggle: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val context = LocalContext.current
     val currency = entry.currency
     val range = "${Format.money(entry.minPrice, currency)} – ${Format.money(entry.maxPrice, currency)}"
 
@@ -335,23 +335,28 @@ private fun HistoryRow(
 
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, entry.soldDeeplink.toUri()))
-                        }) {
-                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("View sold listings on eBay")
-                        }
+                        EbayLinkButton("Sold", entry.soldDeeplink)
+                        EbayLinkButton("Active", EbayUrls.search(entry.searchTerm, soldOnly = false))
                         Spacer(Modifier.weight(1f))
                         TextButton(onClick = onDelete) {
                             Icon(Icons.Filled.DeleteOutline, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(6.dp))
                             Text("Delete")
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun EbayLinkButton(label: String, url: String) {
+    val context = LocalContext.current
+    TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }) {
+        Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+        Spacer(Modifier.width(6.dp))
+        Text(label)
     }
 }
 
