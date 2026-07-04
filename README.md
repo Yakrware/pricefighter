@@ -6,8 +6,11 @@ scrapes eBay’s public **sold** and **active** search pages and returns a repor
 price range, average, median, 30-day sell-through velocity, current active-listing
 count, lowest current price, and a deeplink to the sold results.
 
-There is **no in-app search box** — interaction happens entirely through Gemini. The
-app’s own UI is just a **history** of past lookups plus directions for how to use it.
+It also ships a fully **in-app on-device agent** so you don't need Gemini at all: on the
+History (landing) tab, speak or type a request and **Gemini Nano** understands it, drives
+the same eBay lookup, discards poor matches, and saves a report — all on-device, no cloud,
+and it degrades to offline heuristics where Nano isn't available. (The Gemini-callable app
+functions are kept in place for when that integration opens up more widely.)
 **All data stays on the device.**
 
 ---
@@ -98,19 +101,23 @@ app/src/main/java/com/pricefighter/
 │  └─ PriceCheckFunctions.kt    The Gemini-callable @AppFunctions (the "skill")
 ├─ data/
 │  ├─ model/Models.kt           @AppFunctionSerializable DTOs (agent contract)
+│  ├─ agent/PriceCheckAgent.kt  On-device agent: understand → look up → filter → report
+│  ├─ agent/NanoText.kt         Text-only Gemini Nano wrapper (fails soft to null)
 │  ├─ ebay/EbayUrls.kt          Builds the public search URLs
 │  ├─ ebay/EbayParser.kt        Jsoup HTML → listings (defensive, with selector fallbacks)
 │  ├─ ebay/EbayClient.kt        Fetch (via a PageFetcher) → parsed results
 │  ├─ ebay/PageFetcher.kt       PageFetcher interface + OkHttpPageFetcher (JVM/tests)
 │  ├─ ebay/CronetPageFetcher.kt On-device fetch via Cronet (Chrome fingerprint) + cookies
 │  ├─ ebay/SoldWindow.kt        Pages the last-30-days sold window (majority-older stop)
+│  ├─ ebay/MatchHeuristics.kt   Offline token-overlap match filter (agent's Nano fallback)
 │  ├─ vision/ProductIdentifier.kt  On-device barcode → OCR → Gemini Nano identification
 │  ├─ stats/PriceStats.kt       Range / average / median / velocity
 │  ├─ db/History.kt             Room entity + DAO + database (local-only)
 │  └─ repo/PriceCheckRepository.kt  Single source of truth (UI + functions)
 └─ ui/                          Jetpack Compose UI
    ├─ MainScreen.kt             Bottom tab bar: History / How to / Camera
-   ├─ HistoryTab.kt             Accordion history (one card open at a time)
+   ├─ MainViewModel.kt          History stream + on-device agent state machine
+   ├─ HistoryTab.kt             Voice/text prompt bar + accordion history (one card open)
    ├─ HowToScreen.kt            Usage directions (voice / text / photo)
    ├─ CameraScreen.kt           CameraX capture, Single/Continuous modes, results UI
    └─ CameraViewModel.kt        Single-shot state machine + continuous-session results
@@ -121,9 +128,12 @@ app/src/test/java/com/pricefighter/   JVM unit tests (parser + stats + URL + win
 
 Three tabs (bottom navigation):
 
-- **History** (default) — past price checks. **One card is expanded at a time**: the most
-  recent is open by default with full details; the rest collapse to a one-line summary
-  (item + price range). Tapping a card opens it and closes the previously open one.
+- **History** (default) — a **voice/text prompt bar** on top of past price checks. Speak
+  (mic → system speech recognizer) or type a request and the **on-device agent** runs it,
+  reporting progress inline and dropping the saved report at the top of the list. **One card
+  is expanded at a time**: the most recent is open by default with full details; the rest
+  collapse to a one-line summary (item + price range). Tapping a card opens it and closes the
+  previously open one.
 - **How to** — directions for asking Gemini by voice, text, or photo.
 - **Camera** — a live CameraX preview with a shutter. Snapping a photo identifies the item
   **on-device** and prices it without leaving the app (a loading indicator runs meanwhile).
@@ -152,6 +162,26 @@ Three tabs (bottom navigation):
     the next. A counter tracks progress; **Done** opens the session's results list (each row is
     the item + average price, or "scanning…" / "couldn't identify"). Unidentifiable photos are
     flagged rather than interrupting the flow with the Gemini hand-off.
+
+### On-device price-check agent (History tab)
+
+The prompt bar runs `PriceCheckAgent` — the in-app stand-in for what we hoped consumer Gemini
+would do via the app functions (which is EAP-gated). Given a spoken or typed request it:
+
+1. **Understands** — Gemini Nano (text) distils the request into a clean eBay search term
+   (`"price check my old macbook pro m1"` → `"MacBook Pro M1"`).
+2. **Looks up** — the repository scrapes a page of recent **sold** listings plus **active**
+   listings (the same scraper the camera and app functions use).
+3. **Discards poor matches** — Nano judges each distinct title, dropping accessories, parts,
+   cases, and wrong models — far sharper than token overlap.
+4. **Reports** — the surviving sold listings become a saved report in History.
+
+Every Nano step **fails soft** to an offline heuristic (`MatchHeuristics.byTokenOverlap` /
+filler-word stripping), so the agent still works — just less precisely — on devices without
+Nano or while the model is mid-download, and on the emulator. The result banner shows which
+path ran (*matches judged by Gemini Nano* vs *matched by keywords*). Voice input uses the
+system speech recognizer (`RecognizerIntent`), so it needs no `RECORD_AUDIO` permission; the
+mic is hidden when no recognizer is available.
 
 ---
 

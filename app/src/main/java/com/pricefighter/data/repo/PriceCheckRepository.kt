@@ -4,6 +4,7 @@ import com.pricefighter.data.db.HistoryDao
 import com.pricefighter.data.db.HistoryEntity
 import com.pricefighter.data.ebay.EbayClient
 import com.pricefighter.data.ebay.EbayUrls
+import com.pricefighter.data.ebay.MatchHeuristics
 import com.pricefighter.data.ebay.OkHttpPageFetcher
 import com.pricefighter.data.ebay.SoldWindow
 import com.pricefighter.data.model.EbayListing
@@ -12,7 +13,6 @@ import com.pricefighter.data.model.PriceReport
 import com.pricefighter.data.stats.PriceStats
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
-import kotlin.math.ceil
 
 /**
  * Single source of truth for price checks: wraps the eBay scraper, the statistics,
@@ -77,7 +77,7 @@ class PriceCheckRepository(
         // Default sample = last 30 days of sales; fall back to page 1 for slow-moving items.
         val soldWindow = fetchSoldWithinDays(term).ifEmpty { searchSold(term, page = 1).listings }
         val active = searchActive(term)
-        val matched = filterMatches(term, soldWindow).ifEmpty { soldWindow }
+        val matched = MatchHeuristics.byTokenOverlap(term, soldWindow).ifEmpty { soldWindow }
         return buildAndSaveReport(
             searchTerm = term,
             soldListings = matched,
@@ -89,17 +89,6 @@ class PriceCheckRepository(
     suspend fun deleteEntry(id: Long) = dao.delete(id)
 
     suspend fun clearHistory() = dao.clear()
-
-    /** Keep listings whose title contains at least ~60% of the search tokens. */
-    private fun filterMatches(term: String, listings: List<EbayListing>): List<EbayListing> {
-        val tokens = term.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
-        if (tokens.isEmpty()) return listings
-        val needed = ceil(tokens.size * 0.6).toInt().coerceAtLeast(1)
-        return listings.filter { listing ->
-            val title = listing.title.lowercase()
-            tokens.count { title.contains(it) } >= needed
-        }
-    }
 }
 
 private fun PriceReport.toEntity(): HistoryEntity = HistoryEntity(
