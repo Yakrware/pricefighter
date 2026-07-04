@@ -29,10 +29,10 @@ as described in the task:
 
 | Tool (`@AppFunction`) | What Gemini uses it for |
 |---|---|
-| `searchSoldListings(searchTerm, page)` | Fetch one page of **sold** listings (title, price, sold date, URL). Gemini reads the titles and keeps only the ones that genuinely match the item/model. Can be called for multiple pages. |
+| `howToPriceCheck()` | **Start here.** Returns the recommended ordered plan (overview + steps) for a price check. Does no work itself — a landing spot for the "price check" phrase that routes the agent into the flow below. There is deliberately **no do-everything tool**; filtering is the agent's job. |
+| `searchSoldListings(searchTerm, page)` | Fetch one page of **raw** **sold** listings (title, price, sold date, URL). Gemini reads the titles and keeps only the ones that genuinely match the item/model. Can be called for multiple pages. |
 | `searchActiveListings(searchTerm)` | Fetch **active** listings sorted lowest-price-first → total active count + lowest current price. |
-| `buildPriceReport(searchTerm, soldListings, activeListings, lowestActivePrice)` | Turn the **filtered** sold listings + active figures into the final report (range, average, median, velocity, deeplink) and **save it to local history**. |
-| `priceCheck(item, model)` | One-shot convenience that runs the whole flow in a single call (fetch sold + active, filter by token overlap, build & save). |
+| `buildPriceReport(searchTerm, soldListings, activeListings, lowestActivePrice)` | Turn the **agent-filtered** sold listings + active figures into the final report (range, average, median, velocity, deeplink) and **save it to local history**. |
 
 A typical Gemini run:
 
@@ -61,8 +61,8 @@ would and parses it with Jsoup. The HTTP transport is pluggable via a `PageFetch
 
 The parser targets eBay's current `s-card` SRP markup (with `s-item` fallbacks). This
 pipeline is validated against **live eBay** both from the host (`EbayLiveIntegrationTest`)
-and **on the emulator end-to-end** — `priceCheck` via Cronet returns a real report (see
-"Auto-test").
+and **on the emulator end-to-end** — the `searchSoldListings` app function via Cronet returns
+real listings (see "Auto-test").
 
 ### eBay URLs used
 
@@ -71,10 +71,11 @@ and **on the emulator end-to-end** — `priceCheck` via Cronet returns a real re
 
 Every search carries the **item-condition filter** `LH_ItemCondition` set to all sellable
 conditions — New, Open Box, New-other, every refurbished grade, and Used — which excludes
-the **"For parts or not working" (7000)** condition, so parts-only listings never enter the
-sample. (This filters by eBay *condition*. Cheap *accessories* — ear pads, cables, cases —
-that match the search term but are complete items are a separate relevance concern, handled
-by the agent's title matching in the multi-tool flow.)
+the **"For parts or not working" (7000)** condition. This filters by eBay *condition* only —
+empty boxes, broken units listed under a normal condition, and cheap *accessories* (ear pads,
+cables, cases) that match the search term are a separate relevance concern. Those are dropped
+by the **agent's title judgement** (Gemini Nano, with clever prompting) in the multi-tool flow,
+with `MatchHeuristics` as the offline fallback — the raw search results themselves are unfiltered.
 
 **Sold sort & the 30-day window.** Sold searches are sorted by **sold/ended date, most
 recent first** (`_sop=13`), so the recent window sits at the top of page 1 and continues
@@ -109,7 +110,7 @@ app/src/main/java/com/pricefighter/
 │  ├─ ebay/PageFetcher.kt       PageFetcher interface + OkHttpPageFetcher (JVM/tests)
 │  ├─ ebay/CronetPageFetcher.kt On-device fetch via Cronet (Chrome fingerprint) + cookies
 │  ├─ ebay/SoldWindow.kt        Pages the last-30-days sold window (majority-older stop)
-│  ├─ ebay/MatchHeuristics.kt   Offline token-overlap match filter (agent's Nano fallback)
+│  ├─ ebay/MatchHeuristics.kt   Offline fallback filter: token overlap + box/parts junk drop
 │  ├─ vision/ProductIdentifier.kt  On-device ID: barcode → OCR-assisted Gemini Nano → labeled model
 │  ├─ stats/PriceStats.kt       Range / average / median / velocity
 │  ├─ db/History.kt             Room entity + DAO + database (local-only)
@@ -278,21 +279,22 @@ Android ships a system tool for invoking app functions directly:
 # List the functions this app registered:
 adb shell cmd app_function list-app-functions | grep -F com.pricefighter
 
-# One-shot price check (function IDs are <fully-qualified-class>#<method>):
+# Fetch a page of raw sold listings (function IDs are <fully-qualified-class>#<method>):
 adb shell "cmd app_function execute-app-function \
   --package com.pricefighter \
-  --function \"com.pricefighter.appfunctions.PriceCheckFunctions#priceCheck\" \
-  --parameters '{\"item\":[\"Sony WH-1000XM5\"]}'"
+  --function \"com.pricefighter.appfunctions.PriceCheckFunctions#searchSoldListings\" \
+  --parameters '{\"searchTerm\":[\"Sony WH-1000XM5\"]}'"
 ```
 
 The four registered function IDs (confirmed in the generated `assets/app_functions.xml`):
 
+- `com.pricefighter.appfunctions.PriceCheckFunctions#howToPriceCheck`
 - `com.pricefighter.appfunctions.PriceCheckFunctions#searchSoldListings`
 - `com.pricefighter.appfunctions.PriceCheckFunctions#searchActiveListings`
 - `com.pricefighter.appfunctions.PriceCheckFunctions#buildPriceReport`
-- `com.pricefighter.appfunctions.PriceCheckFunctions#priceCheck`
 
-After a successful call, the report shows up in the app’s history.
+`searchSoldListings` returns raw listings; `buildPriceReport` is the call that saves a finished
+report to the app’s history.
 
 ---
 
@@ -329,15 +331,15 @@ $12.10; report avg $205.50, median $199.99, range $12.99–$387.99. The determin
 suite (parser + stats, including a current-`s-card`-markup case) runs with a plain
 `./gradlew :app:testDebugUnitTest`.
 
-**On-device, end-to-end:** invoking the `priceCheck` app function on an API-37 emulator
-runs the full Cronet pipeline against live eBay and returns a real report (e.g. Sony
-WH-1000XM5 → 26 sold, avg $117.99, median $127.50, 1,600 active) which then appears in
-the history UI:
+**On-device, end-to-end:** invoking the `searchSoldListings` app function on an API-37 emulator
+runs the full Cronet pipeline against live eBay and returns real sold listings (e.g. Sony
+WH-1000XM5 → 60 parsed with titles/prices/sold dates). Feeding a filtered subset to
+`buildPriceReport` then produces the saved report that appears in the history UI:
 
 ```bash
 adb shell 'cmd app_function execute-app-function --package com.pricefighter \
-  --function "com.pricefighter.appfunctions.PriceCheckFunctions#priceCheck" \
-  --parameters "{\"item\":[\"Sony WH-1000XM5\"]}" --timeout-duration 90 --brief-yaml'
+  --function "com.pricefighter.appfunctions.PriceCheckFunctions#searchSoldListings" \
+  --parameters "{\"searchTerm\":[\"Sony WH-1000XM5\"]}" --timeout-duration 90 --brief-yaml'
 ```
 - **Velocity is a lower bound** when an item sells more than ~60 times in 30 days and only
   one sold page is fetched — fetch more pages (the agentic flow supports it) for accuracy.

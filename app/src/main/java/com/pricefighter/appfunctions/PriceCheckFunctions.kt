@@ -6,23 +6,28 @@ import androidx.appfunctions.service.AppFunction
 import com.pricefighter.ServiceLocator
 import com.pricefighter.data.model.EbayListing
 import com.pricefighter.data.model.EbaySearchResult
+import com.pricefighter.data.model.PriceCheckPlan
 import com.pricefighter.data.model.PriceReport
 
 /**
  * The PriceFighter "skill" exposed to Gemini.
  *
- * These functions are designed to be used agentically. A typical "price check"
- * conversation drives them like this:
+ * These functions are designed to be used agentically, called **in order**, with the agent doing
+ * the judgement in between — the tools fetch raw data, the agent decides what counts:
  *
- *  1. The user says/types/photographs an item; Gemini resolves it to an item + model
+ *  1. The user says/types/photographs an item; the agent resolves it to an item + model
  *     (e.g. a photo becomes "Sony WH-1000XM5").
- *  2. Gemini calls [searchSoldListings] for one or more pages and reads the titles,
- *     keeping only the listings that genuinely match the item.
- *  3. Gemini calls [searchActiveListings] once to get the live count and lowest price.
- *  4. Gemini calls [buildPriceReport] with the matched sold listings to get range,
- *     average, median, velocity, and a deeplink — which is also saved to history.
+ *  2. The agent calls [searchSoldListings] (one or more pages) to get **raw** results, then reads
+ *     the titles and **keeps only genuine matches** — dropping empty boxes ("box only"), broken /
+ *     for-parts units, accessories (cases, chargers, cables, straps…), and different models. This
+ *     filtering step is the agent's job; the tool does not do it.
+ *  3. The agent calls [searchActiveListings] once to get the live count and lowest price.
+ *  4. The agent calls [buildPriceReport] with **only the matches it kept** to get range, average,
+ *     median, velocity, and a deeplink — which is also saved to history.
  *
- * [priceCheck] collapses all of that into a single call for quick lookups.
+ * [howToPriceCheck] returns that plan as a tool result — a landing spot for the "price check"
+ * command phrase that routes the agent into the ordered flow above. There is deliberately no
+ * do-everything tool: filtering out poor matches is the agent's judgement, not a shortcut.
  *
  * Every class that holds `@AppFunction`s is created by the framework with a no-arg
  * constructor, so shared state (the repository) is read from [ServiceLocator].
@@ -36,8 +41,10 @@ class PriceCheckFunctions {
      * sales and each further page goes further back in time (up to 60 per page). The default
      * sample of interest is the **last 30 days**: start at page 1 and keep paging while the
      * sold dates are still within 30 days — that set is also the basis for the 30-day
-     * velocity. Inspect [EbaySearchResult.listings], keep only titles that genuinely match
-     * the item/model, then pass them to [buildPriceReport].
+     * velocity. Results are raw and unfiltered: inspect [EbaySearchResult.listings] and keep only
+     * titles that are genuinely this item/model — drop empty boxes ("box only"), for-parts/broken
+     * units, accessories (cases, chargers, cables, straps…), and other models — then pass the kept
+     * listings to [buildPriceReport].
      *
      * @param searchTerm The item plus model to look up, for example "Sony WH-1000XM5".
      * @param page 1-based page of sold results; omit (or null) for page 1, the most recent sales.
@@ -112,27 +119,31 @@ class PriceCheckFunctions {
     }
 
     /**
-     * Runs a complete price check in a single call: fetches sold and active eBay listings,
-     * filters them to the item, and returns a finished, saved report.
+     * Start here for a "price check": returns the recommended step-by-step plan for pricing an
+     * item accurately with the other tools. This call does no work itself — it just orients you.
      *
-     * Prefer this for a quick answer. Use the finer-grained [searchSoldListings],
-     * [searchActiveListings], and [buildPriceReport] tools when you want to read and filter
-     * the matching listings yourself across multiple pages.
+     * A price check is a few tool calls made in order, and **you** filter the results in between:
+     * fetch raw sold listings, keep only the genuine matches, then build the report. There is no
+     * do-everything shortcut on purpose — filtering out poor matches is the agent's judgement.
      *
-     * @param item The product description, for example "Sony noise-cancelling headphones".
-     * @param model The specific model or model number, for example "WH-1000XM5". May be omitted.
-     * @return A finished, saved price report.
+     * @return An overview plus the ordered steps to follow, each naming the tool to call.
      */
     @AppFunction(isDescribedByKDoc = true)
-    suspend fun priceCheck(
-        appFunctionContext: AppFunctionContext,
-        item: String,
-        model: String? = null,
-    ): PriceReport {
-        val modelText = model.orEmpty()
-        if (item.isBlank() && modelText.isBlank()) {
-            throw AppFunctionInvalidArgumentException("Provide at least an item or a model to price check.")
-        }
-        return ServiceLocator.repository.priceCheck(item.trim(), modelText.trim())
-    }
+    suspend fun howToPriceCheck(appFunctionContext: AppFunctionContext): PriceCheckPlan =
+        PriceCheckPlan(
+            overview = "Price-check an item as a few ordered tool calls; you filter the results " +
+                "in between. There is no single do-it-all tool — that keeps the matching accurate.",
+            steps = listOf(
+                "1. Resolve the user's item to a brand + model, e.g. \"Sony WH-1000XM5\".",
+                "2. Call searchSoldListings(searchTerm). Page 1 is the most recent sales; page " +
+                    "again while the sold dates are within the last 30 days. Results are RAW.",
+                "3. Read the titles and keep ONLY genuine matches. Drop empty boxes (\"box only\"), " +
+                    "for-parts/broken units, accessories (case, cover, charger, cable, strap…), " +
+                    "manuals, and different models or variants.",
+                "4. Call searchActiveListings(searchTerm) once for the live count and lowest price.",
+                "5. Call buildPriceReport(searchTerm, keptSoldListings, activeListings, " +
+                    "lowestActivePrice). It computes range/average/median/velocity, saves to " +
+                    "history, and returns the report to present to the user.",
+            ),
+        )
 }

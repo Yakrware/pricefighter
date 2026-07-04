@@ -2,6 +2,7 @@ package com.pricefighter.data.repo
 
 import com.pricefighter.data.db.HistoryDao
 import com.pricefighter.data.db.HistoryEntity
+import com.pricefighter.data.db.IncludedListing
 import com.pricefighter.data.ebay.EbayClient
 import com.pricefighter.data.ebay.EbayUrls
 import com.pricefighter.data.ebay.MatchHeuristics
@@ -61,7 +62,7 @@ class PriceCheckRepository(
         lowestActivePrice: Double?,
     ): PriceReport {
         val report = PriceStats.buildReport(searchTerm, soldListings, activeListings, lowestActivePrice)
-        dao.insert(report.toEntity())
+        dao.insert(report.toEntity(soldListings))
         return report
     }
 
@@ -91,7 +92,7 @@ class PriceCheckRepository(
     suspend fun clearHistory() = dao.clear()
 }
 
-private fun PriceReport.toEntity(): HistoryEntity = HistoryEntity(
+private fun PriceReport.toEntity(included: List<EbayListing>): HistoryEntity = HistoryEntity(
     searchTerm = searchTerm,
     soldCount = soldCount,
     minPrice = minPrice,
@@ -104,4 +105,5 @@ private fun PriceReport.toEntity(): HistoryEntity = HistoryEntity(
     currency = currency,
     soldDeeplink = soldDeeplink,
     createdAtEpochMs = System.currentTimeMillis(),
+    included = included.map { IncludedListing(it.title, it.price, it.soldDateIso, it.itemUrl) },
 )
