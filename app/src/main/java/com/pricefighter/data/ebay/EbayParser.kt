@@ -33,21 +33,6 @@ object EbayParser {
         ".srp-river-answer--REWRITE_START, .srp-save-null-search, .srp-save-null-search__heading"
     private val REWRITE_MARKER_TEXT = Pattern.compile("(?i)(no exact matches|matching fewer words)")
 
-    // eBay's LH_ItemCondition filter only catches listings the seller marked "For parts or not
-    // working". Empty boxes and broken/parts units are routinely listed under New/Used with the
-    // tell in the *title* instead, so they slip past the condition filter and skew the price.
-    // Drop any listing whose title advertises box-only / parts-only / broken.
-    private val EXCLUDE_TITLE = Pattern.compile(
-        "(?i)\\b(" +
-            "box\\s+only|empty\\s+box|just\\s+the\\s+box|box\\s+(?:and|&|\\+)\\s+manual|" +
-            "no\\s+(?:console|device|game|controller|headset|handset)|" +
-            "for\\s+parts|parts\\s+only|spares?\\s*(?:or|/)\\s*repair|repair\\s+only|" +
-            "not\\s+working|non[\\s-]?working|does\\s+not\\s+work|doesn'?t\\s+work|faulty|" +
-            "case\\s+only|cover\\s+only|shell\\s+only|strap\\s+only|band\\s+only|manual\\s+only|" +
-            "replacement\\s+(?:case|cover|shell)" +
-            ")\\b",
-    )
-
     fun parse(html: String): ParsedPage {
         val doc = Jsoup.parse(html)
         return ParsedPage(parseTotal(doc), parseListings(doc))
@@ -96,8 +81,6 @@ object EbayParser {
         }
         // The first card is frequently an "Shop on eBay" placeholder.
         if (title.isBlank() || title.equals("Shop on eBay", ignoreCase = true)) return null
-        // Skip empty-box / parts-only / broken listings the condition filter can't catch.
-        if (EXCLUDE_TITLE.matcher(title).find()) return null
 
         // Prefer the actual price; skip struck-through "was" prices in s-card markup.
         val priceEl = el.selectFirst(".s-item__price")

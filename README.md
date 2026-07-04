@@ -71,10 +71,11 @@ and **on the emulator end-to-end** — `priceCheck` via Cronet returns a real re
 
 Every search carries the **item-condition filter** `LH_ItemCondition` set to all sellable
 conditions — New, Open Box, New-other, every refurbished grade, and Used — which excludes
-the **"For parts or not working" (7000)** condition, so parts-only listings never enter the
-sample. (This filters by eBay *condition*. Cheap *accessories* — ear pads, cables, cases —
-that match the search term but are complete items are a separate relevance concern, handled
-by the agent's title matching in the multi-tool flow.)
+the **"For parts or not working" (7000)** condition. This filters by eBay *condition* only —
+empty boxes, broken units listed under a normal condition, and cheap *accessories* (ear pads,
+cables, cases) that match the search term are a separate relevance concern. Those are dropped
+by the **agent's title judgement** (Gemini Nano, with clever prompting) in the multi-tool flow,
+with `MatchHeuristics` as the offline fallback — the raw search results themselves are unfiltered.
 
 **Sold sort & the 30-day window.** Sold searches are sorted by **sold/ended date, most
 recent first** (`_sop=13`), so the recent window sits at the top of page 1 and continues
@@ -109,7 +110,7 @@ app/src/main/java/com/pricefighter/
 │  ├─ ebay/PageFetcher.kt       PageFetcher interface + OkHttpPageFetcher (JVM/tests)
 │  ├─ ebay/CronetPageFetcher.kt On-device fetch via Cronet (Chrome fingerprint) + cookies
 │  ├─ ebay/SoldWindow.kt        Pages the last-30-days sold window (majority-older stop)
-│  ├─ ebay/MatchHeuristics.kt   Offline token-overlap match filter (agent's Nano fallback)
+│  ├─ ebay/MatchHeuristics.kt   Offline fallback filter: token overlap + box/parts junk drop
 │  ├─ vision/ProductIdentifier.kt  On-device ID: barcode → OCR-assisted Gemini Nano → labeled model
 │  ├─ stats/PriceStats.kt       Range / average / median / velocity
 │  ├─ db/History.kt             Room entity + DAO + database (local-only)

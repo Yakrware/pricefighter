@@ -93,10 +93,14 @@ class PriceCheckAgent(
 
         val numbered = distinctTitles.mapIndexed { i, t -> "${i + 1}. $t" }.joinToString("\n")
         val answer = nano.complete(
-            "A shopper is pricing \"$query\" on eBay. From the numbered listing titles below, reply " +
-                "with ONLY the numbers that are genuinely this product. Exclude accessories, cases, " +
-                "screen protectors, chargers, cables, parts, and different models. Comma-separated " +
-                "numbers only.\n$numbered\nKeep:",
+            "You are pricing \"$query\" from eBay sold listings. Keep ONLY listings that are the " +
+                "actual working product a buyer pays the going rate for. EXCLUDE:\n" +
+                "- empty boxes or packaging (\"box only\", \"no device\")\n" +
+                "- broken / for-parts / not-working / repair units\n" +
+                "- accessories and add-ons (case, cover, screen protector, charger, cable, stand, " +
+                "strap, band, skin, mount) and manuals\n" +
+                "- a different model, size, or variant than \"$query\"\n" +
+                "Reply with ONLY the numbers to keep, comma-separated.\n$numbered\nKeep:",
             maxOutputTokens = 200,
         ) ?: return MatchHeuristics.byTokenOverlap(query, sold) to false
 

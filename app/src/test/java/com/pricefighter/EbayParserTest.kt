@@ -172,9 +172,10 @@ class EbayParserTest {
     """.trimIndent()
 
     @Test
-    fun dropsBoxOnlyAndPartsOnlyListings() {
+    fun returnsRawListingsUnfilteredForTheAgentToJudge() {
+        // The parser reports what eBay showed, box-only/parts-only included; deciding which are
+        // genuine matches is the agent's job (Nano), with MatchHeuristics as the offline fallback.
         val listings = EbayParser.parse(boxAndPartsHtml).listings
-        assertEquals(1, listings.size)
-        assertEquals("Sony WH-1000XM5 Wireless Headphones Black", listings[0].title)
+        assertEquals(4, listings.size)
     }
 }
