@@ -110,7 +110,7 @@ app/src/main/java/com/pricefighter/
 │  ├─ ebay/CronetPageFetcher.kt On-device fetch via Cronet (Chrome fingerprint) + cookies
 │  ├─ ebay/SoldWindow.kt        Pages the last-30-days sold window (majority-older stop)
 │  ├─ ebay/MatchHeuristics.kt   Offline token-overlap match filter (agent's Nano fallback)
-│  ├─ vision/ProductIdentifier.kt  On-device barcode → OCR → Gemini Nano identification
+│  ├─ vision/ProductIdentifier.kt  On-device ID: barcode → OCR-assisted Gemini Nano → labeled model
 │  ├─ stats/PriceStats.kt       Range / average / median / velocity
 │  ├─ db/History.kt             Room entity + DAO + database (local-only)
 │  └─ repo/PriceCheckRepository.kt  Single source of truth (UI + functions)
@@ -137,19 +137,24 @@ Three tabs (bottom navigation):
 - **How to** — directions for asking Gemini by voice, text, or photo.
 - **Camera** — a live CameraX preview with a shutter. Snapping a photo identifies the item
   **on-device** and prices it without leaving the app (a loading indicator runs meanwhile).
-  The identifier is a fall-through chain:
+  The identifier is a fall-through chain aimed at a **brand + model** eBay can search:
   1. **Barcode** (ML Kit) → a UPC/EAN, which eBay can search directly.
-  2. **Label OCR** (ML Kit) → a model-number token read off the item.
-  3. **Gemini Nano** (ML Kit GenAI Prompt API) → on-device multimodal identification on
-     supported devices. If the model isn't downloaded yet (`checkStatus() == DOWNLOADABLE`),
-     the app starts the **one-time model download** (kicked off proactively when the camera
-     opens) and uses Nano once it's `AVAILABLE`; until then it falls through. On a Galaxy
-     Z Fold 7 the download is ~12 MB / a couple seconds (the base model ships with AICore).
+  2. **Gemini Nano** (ML Kit GenAI Prompt API) → on-device multimodal identification on supported
+     devices, and the primary identifier. The item is **OCR'd first (ML Kit)** and that text is
+     folded into Nano's prompt — a small model is far better at deciding *which* string is the
+     brand/model versus a serial or store label than at reading it off pixels. If the model isn't
+     downloaded yet (`checkStatus() == DOWNLOADABLE`), the app starts the **one-time model
+     download** (kicked off proactively when the camera opens) and uses Nano once it's `AVAILABLE`;
+     until then it falls through. On a Galaxy Z Fold 7 the download is ~12 MB / a couple seconds
+     (the base model ships with AICore).
+  3. **Labeled model number** — offline fallback (when Nano is unavailable) that mines the *same*
+     OCR text for an explicitly labeled model ("Model", "M/N", …). Arbitrary tokens are never
+     used: a random code or serial off the packaging makes a useless search.
   4. **Fallback** — if nothing on-device can identify it, hand the photo to the **Gemini app**
      (`ACTION_SEND` image + prompt, falling back to the system chooser).
 
   When a tier identifies the item, the app runs its **own** `priceCheck()` (no Gemini round-trip
-  needed) and the report lands in History. Note: Gemini Nano (tier 3) is gated to recent
+  needed) and the report lands in History. Note: Gemini Nano (tier 2) is gated to recent
   flagship devices and an experimental beta SDK, runs only while the app is foreground
   (`BACKGROUND_USE_BLOCKED` otherwise), and is not available on the emulator.
 
