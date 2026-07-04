@@ -33,6 +33,7 @@ private enum class PfTab(val label: String, val icon: ImageVector) {
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
     val history by viewModel.history.collectAsStateWithLifecycle()
+    val agentState by viewModel.agentState.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(PfTab.History) }
 
     Scaffold(
@@ -66,6 +67,9 @@ fun MainScreen(viewModel: MainViewModel) {
             PfTab.History -> HistoryTab(
                 history = history,
                 onDelete = viewModel::deleteEntry,
+                agentState = agentState,
+                onSubmitQuery = viewModel::runAgent,
+                onDismissAgentState = viewModel::dismissAgentState,
                 contentPadding = padding,
             )
 

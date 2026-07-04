@@ -28,12 +28,19 @@ import kotlin.coroutines.resumeWithException
 data class Identification(val searchTerm: String, val via: String)
 
 /**
- * Identifies a product from a photo, fully on-device, trying cheap/universal methods first:
+ * Identifies a product from a photo, fully on-device. The goal is a **brand + model** an eBay
+ * search can use, so it tries the most reliable identifiers first:
  *
  *  1. **Barcode** (ML Kit) — a UPC/EAN is a precise product key eBay can search directly.
- *  2. **Label OCR** (ML Kit) — read a model-number-looking token off the item.
- *  3. **Gemini Nano** (ML Kit GenAI Prompt API) — multimodal identification for messy/unlabeled
- *     items, but only on supported devices (`checkStatus() == AVAILABLE`); skipped otherwise.
+ *  2. **Gemini Nano** (ML Kit GenAI Prompt API) — multimodal brand-and-model identification, our
+ *     primary identifier on supported devices (`checkStatus() == AVAILABLE`); skipped otherwise.
+ *     We OCR the item first (tier 2.5 below) and feed that text into Nano's prompt: a small model
+ *     is far better at *classifying* strings it's handed ("WH-1000XM5 is the model, this is a
+ *     serial") than at reading them off pixels.
+ *  3. **Labeled identifier** — the offline fallback when Nano isn't available, using the same OCR
+ *     text. Pulled only when the item explicitly labels it: a model/part number ("Model", "M/N",
+ *     "P/N", …) is preferred, else a labeled serial ("S/N", "Serial", …). We never grab an
+ *     arbitrary token — the label is what makes it safe to trust.
  *
  * Returns null when nothing on-device could identify it — the caller then falls back to handing
  * the photo to the full Gemini app (tier 4).
@@ -62,8 +69,13 @@ class ProductIdentifier(context: Context) {
         val image = InputImage.fromBitmap(bitmap, 0)
 
         barcode(image)?.let { return Identification(it, "barcode") }
-        labelModelNumber(image)?.let { return Identification(it, "label text") }
-        nano(bitmap)?.let { return Identification(it, "Gemini Nano") }
+
+        // OCR the whole item once. The text both feeds Nano (so it can tell a brand/model from a
+        // serial or store label) and, if Nano isn't available, is mined for a labeled model number.
+        val ocrText = readAllText(image)
+
+        nano(bitmap, ocrText)?.let { return Identification(it, "Gemini Nano") }
+        extractLabeledId(ocrText)?.let { return Identification(it, "label text") }
         return null
     }
 
@@ -72,18 +84,19 @@ class ProductIdentifier(context: Context) {
             .firstNotNullOfOrNull { barcode -> barcode.rawValue?.takeIf { it.isNotBlank() } }
     }.getOrNull()
 
-    private suspend fun labelModelNumber(image: InputImage): String? = runCatching {
-        extractModelNumber(textRecognizer.process(image).await().text)
-    }.getOrNull()
+    /** All text ML Kit can read off the item, trimmed; empty string if OCR finds nothing/fails. */
+    private suspend fun readAllText(image: InputImage): String = runCatching {
+        textRecognizer.process(image).await().text.trim()
+    }.getOrDefault("")
 
-    private suspend fun nano(bitmap: Bitmap): String? {
+    private suspend fun nano(bitmap: Bitmap, ocrText: String): String? {
         return try {
             val model = Generation.getClient()
             val status = model.checkStatus()
             Log.i(TAG, "Gemini Nano checkStatus=$status (0=UNAVAILABLE 1=DOWNLOADABLE 2=DOWNLOADING 3=AVAILABLE)")
             when (status) {
                 FeatureStatus.AVAILABLE -> {
-                    val request = generateContentRequest(ImagePart(bitmap), TextPart(NANO_PROMPT)) {}
+                    val request = generateContentRequest(ImagePart(bitmap), TextPart(nanoPrompt(ocrText))) {}
                     val answer = model.generateContent(request).candidates.firstOrNull()?.text?.trim()
                     Log.i(TAG, "Gemini Nano answer=\"$answer\"")
                     answer?.takeIf { it.isNotBlank() && !it.equals("unknown", ignoreCase = true) }
@@ -119,25 +132,60 @@ class ProductIdentifier(context: Context) {
 
     companion object {
         private const val TAG = "PriceFighter"
-        private const val NANO_PROMPT =
-            "Identify the product brand and model in this photo. Reply with only the brand and " +
-                "model number, for example \"Sony WH-1000XM5\". If unsure, reply \"unknown\"."
+
+        // Cap on how much OCR text we hand Nano — a product label is short, and the small model
+        // has a limited context window, so trim anything unusually long.
+        private const val OCR_CONTEXT_LIMIT = 1200
+
+        /**
+         * Builds Nano's identification prompt, folding in whatever OCR read off the item so the
+         * model can decide which strings are the brand/model versus serials, lot codes, or labels.
+         */
+        private fun nanoPrompt(ocrText: String): String {
+            val ask =
+                "Reply with ONLY the brand and model, for example \"Sony WH-1000XM5\". " +
+                    "If you are not sure, reply \"unknown\"."
+            if (ocrText.isBlank()) {
+                return "Identify the product in this photo so it can be looked up on eBay. $ask"
+            }
+            val clipped = ocrText.take(OCR_CONTEXT_LIMIT)
+            return "Identify the product in this photo so it can be looked up on eBay. " +
+                "An OCR reader found this text on the item — it may include serial numbers, lot/" +
+                "batch codes, store labels, or unrelated words, so use judgement:\n" +
+                "\"\"\"\n$clipped\n\"\"\"\n" +
+                "Using the photo together with that text, $ask A bare serial number identifies one " +
+                "unit, not the model — don't return it as the model."
+        }
 
         // App-lifetime scope for the one-time Gemini Nano model download.
         @Volatile
         private var nanoDownloadStarted = false
         private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+        // An identifier is only trustworthy when the item explicitly labels it, so a random code
+        // elsewhere on the packaging is never picked up. A model/part number is the better search
+        // term, but a labeled serial is a real identifier too — we just have to be *sure* it's one.
+        private val LABELED_MODEL = Regex(
+            """(?i)\b(?:model(?:\s*(?:no\.?|number|name|#))?|m/?n|type|part(?:\s*(?:no\.?|number|#))?|p/?n)\s*[:#.\-]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{3,19})""",
+        )
+        private val LABELED_SERIAL = Regex(
+            """(?i)\b(?:serial(?:\s*(?:no\.?|number|#))?|s/?n)\s*[:#.\-]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{4,23})""",
+        )
+
         /**
-         * Picks the most model-number-like token from OCR text: mixes letters and digits, 4–20
-         * chars (e.g. "WH-1000XM5", "HEG-001"). Returns the longest such token, or null.
+         * Reads an identifier from OCR text **only when it's explicitly labeled** — a model/part
+         * number ("Model WH-1000XM5", "M/N: A2338", "P/N …") is preferred, falling back to a
+         * labeled serial ("S/N: …", "Serial …"). The token must contain a digit so a labeled plain
+         * word is ignored. Returns null when nothing is confidently labeled — we'd rather fall
+         * through to Gemini than search a made-up token.
          */
-        fun extractModelNumber(text: String): String? =
-            Regex("[A-Za-z0-9][A-Za-z0-9-]{3,19}")
-                .findAll(text)
-                .map { it.value }
-                .filter { token -> token.any(Char::isDigit) && token.any(Char::isLetter) }
-                .maxByOrNull { it.length }
+        fun extractLabeledId(text: String): String? =
+            firstLabeledToken(LABELED_MODEL, text) ?: firstLabeledToken(LABELED_SERIAL, text)
+
+        private fun firstLabeledToken(label: Regex, text: String): String? =
+            label.findAll(text)
+                .map { it.groupValues[1].trim('-', '/', '.', ' ') }
+                .firstOrNull { token -> token.length >= 4 && token.any(Char::isDigit) }
     }
 }
 

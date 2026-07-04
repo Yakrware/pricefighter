@@ -17,6 +17,13 @@
             <action android:name="android.intent.action.SEND" />
             <data android:mimeType="image/*" />
         </intent>
+        <!-- Landing-page voice input: lets us resolve/launch the system speech recognizer. -->
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
     </queries>
 
     <!--
