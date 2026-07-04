@@ -74,3 +74,16 @@ data class PriceReport(
     /** ISO-8601 timestamp of when this report was generated. */
     val generatedAtIso: String,
 )
+
+/**
+ * The recommended plan for running a price check with the other tools — returned by the
+ * "how to" tool so the calling agent orients itself before acting, rather than reaching for a
+ * lossy do-everything shortcut.
+ */
+@AppFunctionSerializable(isDescribedByKDoc = true)
+data class PriceCheckPlan(
+    /** One-line summary of the approach. */
+    val overview: String,
+    /** The ordered steps to follow, each naming the tool to call and the judgement to apply. */
+    val steps: List<String>,
+)
