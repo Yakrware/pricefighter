@@ -67,9 +67,12 @@ class PriceCheckRepository(
     }
 
     /**
-     * One-shot convenience used by the high-level `priceCheck` function: gather the last
-     * 30 days of sold listings (paging eBay pages as needed) plus active listings, keep
-     * listings whose titles overlap the search tokens, then build and save the report.
+     * One-shot used by the camera flow: gather the last 30 days of sold listings (paging eBay
+     * pages as needed) plus active listings, keep the ones whose titles genuinely match, then
+     * build and save the report.
+     *
+     * If nothing matches, this still saves a report with `soldCount == 0` — the search is always
+     * recorded so the user can see which keywords were tried.
      */
     suspend fun priceCheck(item: String, model: String): PriceReport {
         val term = listOf(item, model).filter { it.isNotBlank() }.joinToString(" ").trim()
@@ -78,10 +81,9 @@ class PriceCheckRepository(
         // Default sample = last 30 days of sales; fall back to page 1 for slow-moving items.
         val soldWindow = fetchSoldWithinDays(term).ifEmpty { searchSold(term, page = 1).listings }
         val active = searchActive(term)
-        val matched = MatchHeuristics.byTokenOverlap(term, soldWindow).ifEmpty { soldWindow }
         return buildAndSaveReport(
             searchTerm = term,
-            soldListings = matched,
+            soldListings = MatchHeuristics.byTokenOverlap(term, soldWindow),
             activeListings = active.totalResults,
             lowestActivePrice = active.lowestPrice,
         )

@@ -48,6 +48,29 @@ class PriceStatsTest {
     }
 
     @Test
+    fun noMatchesStillProducesASavableReport() {
+        // A search that matched nothing is a legitimate outcome — it must still be recorded, with
+        // the keywords intact, rather than throwing.
+        val report = PriceStats.buildReport(
+            searchTerm = "Sony WH-1000XM5",
+            soldListings = emptyList(),
+            activeListings = 37,
+            lowestActivePrice = 150.0,
+            today = LocalDate.of(2026, 6, 22),
+            nowIso = "2026-06-22T00:00:00Z",
+        )
+        assertEquals("Sony WH-1000XM5", report.searchTerm)
+        assertEquals(0, report.soldCount)
+        assertEquals(0.0, report.averagePrice, 0.001)
+        assertEquals(0.0, report.medianPrice, 0.001)
+        assertEquals(0, report.velocityLast30Days)
+        // Active-side figures still carry through, and the deeplink still reproduces the search.
+        assertEquals(37, report.activeListings)
+        assertEquals(150.0, report.lowestActivePrice!!, 0.001)
+        assertEquals("USD", report.currency)
+    }
+
+    @Test
     fun velocityCountsOnlyLast30Days() {
         val report = PriceStats.buildReport(
             searchTerm = "x",

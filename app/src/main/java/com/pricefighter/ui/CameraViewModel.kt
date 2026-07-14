@@ -6,6 +6,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pricefighter.data.model.PriceReport
 import com.pricefighter.data.repo.PriceCheckRepository
+import com.pricefighter.data.vision.ProductCandidate
 import com.pricefighter.data.vision.ProductIdentifier
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,8 +23,16 @@ sealed interface CaptureState {
     /** Identifying the item, then pricing it. [step] is shown next to the spinner. */
     data class Working(val step: String) : CaptureState
 
-    /** Identified and priced; the report is saved to history. */
-    data class Success(val report: PriceReport, val via: String) : CaptureState
+    /**
+     * Identified and priced; the report is saved to history. [alternatives] are the other
+     * candidates the detector considered, so the user can re-run against a different match when
+     * the top guess was wrong.
+     */
+    data class Success(
+        val report: PriceReport,
+        val via: String,
+        val alternatives: List<ProductCandidate> = emptyList(),
+    ) : CaptureState
 
     /** Couldn't identify on-device — the screen hands the photo to the Gemini app (tier 4). */
     data class NeedsGemini(val message: String) : CaptureState
@@ -56,32 +65,49 @@ class CameraViewModel(
     // History. Only the coroutine whose id still matches may touch [_state].
     private var activeLookupId = 0L
 
-    /** Runs the tier 1–3 identification then a price check on the captured photo. */
+    /** Every candidate the last snap produced, so the user can switch to a different match. */
+    private var candidates: List<ProductCandidate> = emptyList()
+
+    /** Runs the on-device identification then prices the best candidate. */
     fun onPhotoCaptured(file: File) {
         val lookupId = ++activeLookupId
         _state.value = CaptureState.Working("Identifying…")
         singleJob = viewModelScope.launch {
-            val identification = runCatching { identifier.identify(file) }.getOrNull()
-            if (identification == null) {
+            val found = runCatching { identifier.identify(file) }.getOrDefault(emptyList())
+            if (found.isEmpty()) {
                 if (activeLookupId == lookupId) {
                     _state.value = CaptureState.NeedsGemini("Couldn’t identify it on-device — opening Gemini…")
                 }
                 return@launch
             }
+            candidates = found
+            priceCandidate(found.first(), lookupId)
+        }
+    }
 
-            if (activeLookupId == lookupId) {
-                _state.value = CaptureState.Working("Pricing “${identification.searchTerm}”…")
-            }
-            val report = runCatching { repository.priceCheck(identification.searchTerm, "") }
-                .getOrElse {
-                    if (activeLookupId == lookupId) {
-                        _state.value = CaptureState.Error("Price check failed: ${it.message}")
-                    }
-                    return@launch
+    /** Re-run the price check against a different candidate the user picked from the result card. */
+    fun selectCandidate(candidate: ProductCandidate) {
+        val lookupId = ++activeLookupId
+        singleJob = viewModelScope.launch { priceCandidate(candidate, lookupId) }
+    }
+
+    private suspend fun priceCandidate(candidate: ProductCandidate, lookupId: Long) {
+        if (activeLookupId == lookupId) {
+            _state.value = CaptureState.Working("Pricing “${candidate.searchTerm}”…")
+        }
+        val report = runCatching { repository.priceCheck(candidate.searchTerm, "") }
+            .getOrElse {
+                if (activeLookupId == lookupId) {
+                    _state.value = CaptureState.Error("Price check failed: ${it.message}")
                 }
-            if (activeLookupId == lookupId) {
-                _state.value = CaptureState.Success(report, identification.via)
+                return
             }
+        if (activeLookupId == lookupId) {
+            _state.value = CaptureState.Success(
+                report = report,
+                via = candidate.via,
+                alternatives = candidates.filterNot { it.searchTerm == candidate.searchTerm },
+            )
         }
     }
 
@@ -111,17 +137,15 @@ class CameraViewModel(
         val id = nextItemId++
         _items.update { it + CaptureItem(id, ItemStatus.Working) }
         viewModelScope.launch {
-            val identification = runCatching { identifier.identify(file) }.getOrNull()
-            if (identification == null) {
+            // Continuous mode has no picker, so it just takes the best candidate and keeps moving.
+            val best = runCatching { identifier.identify(file) }.getOrDefault(emptyList()).firstOrNull()
+            if (best == null) {
                 // No app-switch in continuous mode — just flag it so the flow isn't interrupted.
                 updateItem(id, ItemStatus.Unidentified)
                 return@launch
             }
-            val report = runCatching { repository.priceCheck(identification.searchTerm, "") }.getOrNull()
-            updateItem(
-                id,
-                if (report != null) ItemStatus.Done(report, identification.via) else ItemStatus.Failed,
-            )
+            val report = runCatching { repository.priceCheck(best.searchTerm, "") }.getOrNull()
+            updateItem(id, if (report != null) ItemStatus.Done(report, best.via) else ItemStatus.Failed)
         }
     }
 

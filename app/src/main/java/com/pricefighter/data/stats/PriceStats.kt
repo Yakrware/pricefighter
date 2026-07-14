@@ -9,6 +9,14 @@ import java.time.LocalDate
 /** Computes price-range / average / median / velocity from matched sold listings. */
 object PriceStats {
 
+    private const val DEFAULT_CURRENCY = "USD"
+
+    /**
+     * Builds the report. [soldListings] **may be empty** — that's a legitimate outcome meaning
+     * "we searched and nothing genuinely matched". The report then carries `soldCount == 0` with
+     * zeroed prices, so the search is still recorded in history with the keywords we used (callers
+     * must render the no-match case rather than showing a $0.00 average).
+     */
     fun buildReport(
         searchTerm: String,
         soldListings: List<EbayListing>,
@@ -17,8 +25,6 @@ object PriceStats {
         today: LocalDate = LocalDate.now(),
         nowIso: String = Instant.now().toString(),
     ): PriceReport {
-        require(soldListings.isNotEmpty()) { "Need at least one sold listing to build a report." }
-
         val prices = soldListings.map { it.price }.sorted()
         val cutoff = today.minusDays(30)
         val velocity = soldListings.count { listing ->
@@ -29,14 +35,14 @@ object PriceStats {
         return PriceReport(
             searchTerm = searchTerm,
             soldCount = soldListings.size,
-            minPrice = round2(prices.first()),
-            maxPrice = round2(prices.last()),
-            averagePrice = round2(prices.average()),
+            minPrice = round2(prices.firstOrNull() ?: 0.0),
+            maxPrice = round2(prices.lastOrNull() ?: 0.0),
+            averagePrice = if (prices.isEmpty()) 0.0 else round2(prices.average()),
             medianPrice = round2(median(prices)),
             velocityLast30Days = velocity,
             activeListings = activeListings,
             lowestActivePrice = lowestActivePrice?.let { round2(it) },
-            currency = soldListings.first().currency,
+            currency = soldListings.firstOrNull()?.currency ?: DEFAULT_CURRENCY,
             soldDeeplink = EbayUrls.soldDeeplink(searchTerm),
             generatedAtIso = nowIso,
         )

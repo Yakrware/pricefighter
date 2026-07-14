@@ -19,8 +19,9 @@ import com.pricefighter.data.model.PriceReport
  *     (e.g. a photo becomes "Sony WH-1000XM5").
  *  2. The agent calls [searchSoldListings] (one or more pages) to get **raw** results, then reads
  *     the titles and **keeps only genuine matches** — dropping empty boxes ("box only"), broken /
- *     for-parts units, accessories (cases, chargers, cables, straps…), and different models. This
- *     filtering step is the agent's job; the tool does not do it.
+ *     for-parts units, accessories (cases, chargers, cables, straps…), combos/bundles that include
+ *     other hardware (a CPU sold with a motherboard), and different models. This filtering step is
+ *     the agent's job; the tool does not do it.
  *  3. The agent calls [searchActiveListings] once to get the live count and lowest price.
  *  4. The agent calls [buildPriceReport] with **only the matches it kept** to get range, average,
  *     median, velocity, and a deeplink — which is also saved to history.
@@ -43,8 +44,9 @@ class PriceCheckFunctions {
      * sold dates are still within 30 days — that set is also the basis for the 30-day
      * velocity. Results are raw and unfiltered: inspect [EbaySearchResult.listings] and keep only
      * titles that are genuinely this item/model — drop empty boxes ("box only"), for-parts/broken
-     * units, accessories (cases, chargers, cables, straps…), and other models — then pass the kept
-     * listings to [buildPriceReport].
+     * units, accessories (cases, chargers, cables, straps…), combos/bundles that include other
+     * hardware (a CPU sold with a motherboard), and other models — then pass the kept listings to
+     * [buildPriceReport].
      *
      * @param searchTerm The item plus model to look up, for example "Sony WH-1000XM5".
      * @param page 1-based page of sold results; omit (or null) for page 1, the most recent sales.
@@ -139,7 +141,8 @@ class PriceCheckFunctions {
                     "again while the sold dates are within the last 30 days. Results are RAW.",
                 "3. Read the titles and keep ONLY genuine matches. Drop empty boxes (\"box only\"), " +
                     "for-parts/broken units, accessories (case, cover, charger, cable, strap…), " +
-                    "manuals, and different models or variants.",
+                    "manuals, combos/bundles/lots that include other hardware (e.g. a CPU sold " +
+                    "with a motherboard), and different models or variants.",
                 "4. Call searchActiveListings(searchTerm) once for the live count and lowest price.",
                 "5. Call buildPriceReport(searchTerm, keptSoldListings, activeListings, " +
                     "lowestActivePrice). It computes range/average/median/velocity, saves to " +

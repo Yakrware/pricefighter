@@ -1,11 +1,64 @@
 package com.pricefighter
 
+import com.pricefighter.data.vision.Confidence
 import com.pricefighter.data.vision.ProductIdentifier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProductIdentifierTest {
+
+    @Test
+    fun parsesRankedBrandModelCandidates() {
+        val raw = """
+            Sony | WH-1000XM5 | high
+            Sony | WH-1000XM4 | medium
+            Bose | QuietComfort 45 | low
+        """.trimIndent()
+        val candidates = ProductIdentifier.parseCandidates(raw)
+
+        assertEquals(3, candidates.size)
+        assertEquals("Sony", candidates[0].brand)
+        assertEquals("WH-1000XM5", candidates[0].model)
+        assertEquals("Sony WH-1000XM5", candidates[0].searchTerm)
+        assertEquals(Confidence.HIGH, candidates[0].confidence)
+        assertEquals(Confidence.MEDIUM, candidates[1].confidence)
+        assertEquals(Confidence.LOW, candidates[2].confidence)
+        assertEquals("Bose QuietComfort 45", candidates[2].searchTerm)
+    }
+
+    @Test
+    fun toleratesNanoListFormattingAndJunkLines() {
+        val raw = """
+            Here are my guesses:
+            1. Sony | WH-1000XM5 | high
+            - Sony | WH-1000XM4 | medium
+        """.trimIndent()
+        val candidates = ProductIdentifier.parseCandidates(raw)
+
+        // The prose line has no "|" and is skipped; numbering/bullets are stripped from the brand.
+        assertEquals(2, candidates.size)
+        assertEquals("Sony", candidates[0].brand)
+        assertEquals("Sony WH-1000XM5", candidates[0].searchTerm)
+        assertEquals("Sony WH-1000XM4", candidates[1].searchTerm)
+    }
+
+    @Test
+    fun returnsNoCandidatesWhenNanoIsUnsure() {
+        assertTrue(ProductIdentifier.parseCandidates("unknown").isEmpty())
+        assertTrue(ProductIdentifier.parseCandidates("").isEmpty())
+        // A line with no separator isn't a guess we can trust.
+        assertTrue(ProductIdentifier.parseCandidates("probably some headphones").isEmpty())
+    }
+
+    @Test
+    fun buildsASearchTermFromWhicheverPartIsKnown() {
+        val candidates = ProductIdentifier.parseCandidates("unknown | WH-1000XM5 | medium")
+        assertEquals(1, candidates.size)
+        assertNull(candidates[0].brand)
+        assertEquals("WH-1000XM5", candidates[0].searchTerm)
+    }
 
     @Test
     fun pullsTheModelNumberOutOfLabelText() {

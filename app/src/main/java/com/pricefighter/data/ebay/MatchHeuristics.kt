@@ -26,15 +26,29 @@ object MatchHeuristics {
             ")\\b",
     )
 
+    // A combo/bundle sells the item together with other hardware (a CPU bundled with a
+    // motherboard, a console bundled with games), so its price isn't the item's price. The "+ X"
+    // and "w/ X" forms are deliberately symmetric — searching for the motherboard should drop a
+    // "Motherboard + CPU" combo just as a CPU search drops "CPU + Motherboard".
+    private val BUNDLE_TITLE = Pattern.compile(
+        "(?i)(" +
+            "\\bcombo\\b|\\bbundle\\b|\\bjob\\s+lot\\b|\\blot\\s+of\\s+\\d+|" +
+            "\\+\\s*(?:motherboard|mobo|cpu|processor|ram|memory|gpu|graphics\\s+card|cooler|" +
+            "psu|power\\s+supply|ssd|hdd)\\b|" +
+            "\\bw/\\s*(?:motherboard|mobo|cpu|processor|ram|memory|cooler)\\b|" +
+            "\\bwith\\s+(?:motherboard|mobo)\\b" +
+            ")",
+    )
+
     /**
      * Keep listings whose title contains at least ~60% of the search tokens and that aren't an
-     * obvious empty-box / parts-only / broken listing.
+     * obvious empty-box / parts-only / broken listing, or a combo/bundle with other hardware.
      */
     fun byTokenOverlap(term: String, listings: List<EbayListing>): List<EbayListing> {
         val tokens = term.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
         val needed = ceil(tokens.size * 0.6).toInt().coerceAtLeast(1)
         return listings.filter { listing ->
-            if (isJunk(listing.title)) return@filter false
+            if (isJunk(listing.title) || isBundle(listing.title)) return@filter false
             if (tokens.isEmpty()) return@filter true
             val title = listing.title.lowercase()
             tokens.count { title.contains(it) } >= needed
@@ -43,4 +57,7 @@ object MatchHeuristics {
 
     /** True for titles advertising an empty box, parts-only, or broken/non-working item. */
     fun isJunk(title: String): Boolean = JUNK_TITLE.matcher(title).find()
+
+    /** True for combo/bundle/lot listings that package the item with other hardware. */
+    fun isBundle(title: String): Boolean = BUNDLE_TITLE.matcher(title).find()
 }
