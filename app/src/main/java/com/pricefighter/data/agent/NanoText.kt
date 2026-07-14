@@ -3,10 +3,10 @@ package com.pricefighter.data.agent
 import android.content.Context
 import android.util.Log
 import com.google.mlkit.genai.common.FeatureStatus
-import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.generateContentRequest
+import com.pricefighter.data.nano.NanoClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,14 +27,14 @@ class NanoText(context: Context) {
 
     /** True when Nano can answer right now (model present and device supported). */
     suspend fun isAvailable(): Boolean = runCatching {
-        Generation.getClient().checkStatus() == FeatureStatus.AVAILABLE
+        NanoClient.model().checkStatus() == FeatureStatus.AVAILABLE
     }.getOrDefault(false)
 
     /** Warms the one-time model download (e.g. when the landing page opens) so the first ask is ready. */
     fun prepare() {
         downloadScope.launch {
             runCatching {
-                val model = Generation.getClient()
+                val model = NanoClient.model()
                 if (model.checkStatus() == FeatureStatus.DOWNLOADABLE) ensureDownload(model)
             }.onFailure { Log.w(TAG, "NanoText prepare failed", it) }
         }
@@ -48,7 +48,7 @@ class NanoText(context: Context) {
      */
     suspend fun complete(prompt: String, maxOutputTokens: Int = 64): String? {
         return try {
-            val model = Generation.getClient()
+            val model = NanoClient.model()
             when (model.checkStatus()) {
                 FeatureStatus.AVAILABLE -> {
                     val request = generateContentRequest(TextPart(prompt)) {

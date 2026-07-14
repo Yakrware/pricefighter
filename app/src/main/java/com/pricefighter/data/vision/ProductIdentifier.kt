@@ -6,7 +6,6 @@ import android.graphics.BitmapFactory
 import android.util.Log
 import com.google.android.gms.tasks.Task
 import com.google.mlkit.genai.common.FeatureStatus
-import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.google.mlkit.genai.prompt.ImagePart
 import com.google.mlkit.genai.prompt.TextPart
@@ -15,6 +14,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.pricefighter.data.nano.NanoClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -85,7 +85,7 @@ class ProductIdentifier(context: Context) {
     fun prepareNano() {
         downloadScope.launch {
             runCatching {
-                val model = Generation.getClient()
+                val model = NanoClient.model()
                 if (model.checkStatus() == FeatureStatus.DOWNLOADABLE) ensureNanoDownload(model)
             }.onFailure { Log.w(TAG, "prepareNano failed", it) }
         }
@@ -137,7 +137,7 @@ class ProductIdentifier(context: Context) {
 
     private suspend fun nanoCandidates(bitmap: Bitmap, ocrText: String): List<ProductCandidate> {
         return try {
-            val model = Generation.getClient()
+            val model = NanoClient.model()
             val status = model.checkStatus()
             Log.i(TAG, "Gemini Nano checkStatus=$status (0=UNAVAILABLE 1=DOWNLOADABLE 2=DOWNLOADING 3=AVAILABLE)")
             when (status) {
