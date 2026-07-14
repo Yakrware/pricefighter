@@ -5,20 +5,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import com.google.android.gms.tasks.Task
-import com.google.mlkit.genai.common.FeatureStatus
-import com.google.mlkit.genai.prompt.GenerativeModel
-import com.google.mlkit.genai.prompt.ImagePart
-import com.google.mlkit.genai.prompt.TextPart
-import com.google.mlkit.genai.prompt.generateContentRequest
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import com.pricefighter.data.nano.NanoClient
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
+import com.pricefighter.data.nano.GenAi
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import kotlin.coroutines.resume
@@ -79,17 +70,10 @@ class ProductIdentifier(context: Context) {
     private val textRecognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
     /**
-     * Kicks off the one-time Gemini Nano model download early (e.g. when the camera opens) so
-     * tier 3 is ready by the first snap instead of falling through to Gemini while it downloads.
+     * Kicks off the one-time Gemini Nano model download early (e.g. when the camera opens) so it's
+     * ready by the first snap instead of falling through while it downloads.
      */
-    fun prepareNano() {
-        downloadScope.launch {
-            runCatching {
-                val model = NanoClient.model()
-                if (model.checkStatus() == FeatureStatus.DOWNLOADABLE) ensureNanoDownload(model)
-            }.onFailure { Log.w(TAG, "prepareNano failed", it) }
-        }
-    }
+    fun prepareNano() = GenAi.prepare()
 
     /** Best-first list of what this photo might be; empty when nothing on-device could tell. */
     suspend fun identify(file: File): List<ProductCandidate> {
@@ -135,47 +119,11 @@ class ProductIdentifier(context: Context) {
         textRecognizer.process(image).await().text.trim()
     }.getOrDefault("")
 
+    /** Asks the generative backend (on-device Nano, or the Gemma stand-in on an emulator). */
     private suspend fun nanoCandidates(bitmap: Bitmap, ocrText: String): List<ProductCandidate> {
-        return try {
-            val model = NanoClient.model()
-            val status = model.checkStatus()
-            Log.i(TAG, "Gemini Nano checkStatus=$status (0=UNAVAILABLE 1=DOWNLOADABLE 2=DOWNLOADING 3=AVAILABLE)")
-            when (status) {
-                FeatureStatus.AVAILABLE -> {
-                    val request = generateContentRequest(ImagePart(bitmap), TextPart(nanoPrompt(ocrText))) {
-                        maxOutputTokens = 120
-                    }
-                    val answer = model.generateContent(request).candidates.firstOrNull()?.text?.trim()
-                    Log.i(TAG, "Gemini Nano answer=\"$answer\"")
-                    parseCandidates(answer.orEmpty())
-                }
-                // The model isn't on the device yet — kick off the (one-time) download in the
-                // background so a later snap can use it, and fall through for this one.
-                FeatureStatus.DOWNLOADABLE, FeatureStatus.DOWNLOADING -> {
-                    ensureNanoDownload(model)
-                    emptyList()
-                }
-                else -> emptyList() // UNAVAILABLE: device/SDK doesn't support on-device Nano here.
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Gemini Nano failed", e)
-            emptyList()
-        }
-    }
-
-    private fun ensureNanoDownload(model: GenerativeModel) {
-        if (nanoDownloadStarted) return
-        nanoDownloadStarted = true
-        Log.i(TAG, "Gemini Nano model not ready — starting one-time download")
-        downloadScope.launch {
-            runCatching {
-                model.download().collect { Log.i(TAG, "Gemini Nano download: $it") }
-                Log.i(TAG, "Gemini Nano download finished")
-            }.onFailure {
-                nanoDownloadStarted = false
-                Log.w(TAG, "Gemini Nano download failed", it)
-            }
-        }
+        val answer = GenAi.generate(nanoPrompt(ocrText), image = bitmap, maxOutputTokens = 120)
+        Log.i(TAG, "identify answer=\"$answer\"")
+        return parseCandidates(answer.orEmpty())
     }
 
     companion object {
@@ -246,10 +194,6 @@ class ProductIdentifier(context: Context) {
         private fun String.nullIfUnknown(): String? =
             takeIf { it.isNotBlank() && !it.equals("unknown", ignoreCase = true) && it != "-" }
 
-        // App-lifetime scope for the one-time Gemini Nano model download.
-        @Volatile
-        private var nanoDownloadStarted = false
-        private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         // An identifier is only trustworthy when the item explicitly labels it, so a random code
         // elsewhere on the packaging is never picked up. A model/part number is the better search

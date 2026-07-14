@@ -307,6 +307,35 @@ report to the app’s history.
 
 ---
 
+## Which model runs, and developing without a Nano device
+
+**The app never names a model.** The ML Kit prompt API has no such parameter — `Generation.getClient()`
+returns whatever Gemini Nano variant **AICore** carries on that device. The only levers it exposes are
+`ModelPreference` (`FAST` / `FULL`) and `ModelReleaseStage` (`STABLE` / `PREVIEW`). We ask for **FULL**,
+since identification and match-filtering accuracy matter more here than latency.
+
+To report rather than guess, the **About card** on the *How to* tab shows the live backend, status,
+**active model** (`getBaseModelName()`) and token limit (`getTokenLimit()`), straight from the device.
+
+### Emulator stand-in (dev only)
+
+Emulators have no AICore, so every Nano-dependent path — photo → ranked brand/model candidates, and
+the agent's match filtering — is dead there and silently degrades to keyword heuristics. Since Nano is
+built on **Gemma**, a debug build can point the *same prompts* at a hosted Gemma so those paths can be
+exercised on an emulator. Put a key in `local.properties` (gitignored):
+
+```properties
+openrouter.api.key=sk-or-...
+openrouter.model=google/gemma-3-27b-it   # optional; must be vision-capable for the photo path
+```
+
+`RemoteGemmaBackend` is hard-gated to **debug build + emulator + key present** — all three, or the app
+uses on-device Nano. Release builds compile the key and model out to empty strings, so it can never
+ship. Note it sends the prompt (and, for identification, the photo) to OpenRouter — an external
+service — which is exactly why it's restricted to emulators.
+
+---
+
 ## Privacy
 
 - No analytics, no accounts, no remote backend.

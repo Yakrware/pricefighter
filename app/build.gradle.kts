@@ -1,5 +1,17 @@
 import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+
+// Developer-local settings, never committed (local.properties is gitignored). Used only to let a
+// DEBUG build running on an EMULATOR stand in a hosted Gemma for on-device Gemini Nano, which the
+// emulator doesn't have. Absent here, the app simply runs without a generative backend.
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+
+fun localProp(key: String, default: String = ""): String =
+    (localProps.getProperty(key) ?: System.getenv(key.replace('.', '_').uppercase()) ?: default)
 
 plugins {
     alias(libs.plugins.android.application)
@@ -26,12 +38,26 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Emulator-only Nano stand-in. Set these in local.properties (gitignored):
+            //   openrouter.api.key=sk-or-...
+            //   openrouter.model=google/gemma-3-27b-it
+            buildConfigField("String", "OPENROUTER_API_KEY", "\"${localProp("openrouter.api.key")}\"")
+            buildConfigField(
+                "String",
+                "OPENROUTER_MODEL",
+                "\"${localProp("openrouter.model", "google/gemma-3-27b-it")}\"",
+            )
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // Never ship a remote stand-in: release builds have no key and no model.
+            buildConfigField("String", "OPENROUTER_API_KEY", "\"\"")
+            buildConfigField("String", "OPENROUTER_MODEL", "\"\"")
         }
     }
 
@@ -42,6 +68,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {

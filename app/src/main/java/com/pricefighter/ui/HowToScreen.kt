@@ -30,8 +30,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.pricefighter.data.nano.NanoClient
-import com.pricefighter.data.nano.NanoInfo
+import com.pricefighter.data.nano.GenAi
+import com.pricefighter.data.nano.GenAiInfo
 
 @Composable
 fun HowToScreen(contentPadding: PaddingValues, modifier: Modifier = Modifier) {
@@ -104,7 +104,7 @@ fun HowToScreen(contentPadding: PaddingValues, modifier: Modifier = Modifier) {
  */
 @Composable
 private fun AboutCard() {
-    val info by produceState<NanoInfo?>(initialValue = null) { value = NanoClient.info() }
+    val info by produceState<GenAiInfo?>(initialValue = null) { value = GenAi.info() }
 
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(16.dp)) {
@@ -117,8 +117,9 @@ private fun AboutCard() {
             )
             Spacer(Modifier.height(10.dp))
 
-            AboutRow("Gemini Nano", info?.statusLabel ?: "Checking…")
-            AboutRow("Active model", info?.baseModelName ?: "—")
+            AboutRow("Backend", info?.backend ?: "Checking…")
+            AboutRow("Status", info?.statusLabel ?: "Checking…")
+            AboutRow("Active model", info?.activeModel ?: "—")
             AboutRow("Token limit", info?.tokenLimit?.toString() ?: "—")
 
             Spacer(Modifier.height(10.dp))
