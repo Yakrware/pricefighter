@@ -18,6 +18,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -72,6 +74,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pricefighter.PriceFighterApp
+import com.pricefighter.data.vision.ProductCandidate
 import com.pricefighter.data.vision.ProductIdentifier
 import java.io.File
 import kotlin.coroutines.resume
@@ -158,6 +161,7 @@ fun CameraScreen(
                 onCancelSingle = viewModel::cancelSingle,
                 onClearSession = viewModel::clearSession,
                 onOpenHistory = onOpenHistory,
+                onSelectCandidate = viewModel::selectCandidate,
             )
         } else {
             CameraPermissionPrompt(onRequest = { permissionLauncher.launch(Manifest.permission.CAMERA) })
@@ -177,6 +181,7 @@ private fun CameraCaptureView(
     onCancelSingle: () -> Unit,
     onClearSession: () -> Unit,
     onOpenHistory: () -> Unit,
+    onSelectCandidate: (ProductCandidate) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -234,7 +239,12 @@ private fun CameraCaptureView(
                     onBackground = onResetSingle,
                 )
                 is CaptureState.NeedsGemini -> WorkingOverlay(s.message)
-                is CaptureState.Success -> ResultOverlay(s, onOpenHistory = onOpenHistory, onReset = onResetSingle)
+                is CaptureState.Success -> ResultOverlay(
+                    state = s,
+                    onOpenHistory = onOpenHistory,
+                    onReset = onResetSingle,
+                    onSelectCandidate = onSelectCandidate,
+                )
                 is CaptureState.Error -> ErrorOverlay(s.message, onReset = onResetSingle)
             }
 
@@ -373,7 +383,12 @@ private fun SingleWorkingOverlay(step: String, onCancel: () -> Unit, onBackgroun
 }
 
 @Composable
-private fun ResultOverlay(state: CaptureState.Success, onOpenHistory: () -> Unit, onReset: () -> Unit) {
+private fun ResultOverlay(
+    state: CaptureState.Success,
+    onOpenHistory: () -> Unit,
+    onReset: () -> Unit,
+    onSelectCandidate: (ProductCandidate) -> Unit,
+) {
     val report = state.report
     Box(
         modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)),
@@ -381,17 +396,43 @@ private fun ResultOverlay(state: CaptureState.Success, onOpenHistory: () -> Unit
     ) {
         Card(Modifier.padding(24.dp)) {
             Column(Modifier.padding(20.dp)) {
+                Text("Searched", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(report.searchTerm, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text("identified via ${state.via}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
-                Text(Format.money(report.averagePrice, report.currency), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text("average sold price", style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Range ${Format.money(report.minPrice, report.currency)} – " +
-                        "${Format.money(report.maxPrice, report.currency)} · ${report.soldCount} sold",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                if (report.soldCount == 0) {
+                    Text("No sold matches", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Nothing genuinely matched these keywords — saved to history so you can see what was tried.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(Format.money(report.averagePrice, report.currency), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text("average sold price", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Range ${Format.money(report.minPrice, report.currency)} – " +
+                            "${Format.money(report.maxPrice, report.currency)} · ${report.soldCount} sold",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+
+                if (state.alternatives.isNotEmpty()) {
+                    Spacer(Modifier.height(14.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Not the right match? Search instead:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    state.alternatives.forEach { candidate ->
+                        CandidateRow(candidate, onClick = { onSelectCandidate(candidate) })
+                    }
+                }
+
                 Spacer(Modifier.height(18.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = onReset) { Text("Snap another") }
@@ -400,6 +441,34 @@ private fun ResultOverlay(state: CaptureState.Success, onOpenHistory: () -> Unit
                 }
             }
         }
+    }
+}
+
+/** One alternative the detector considered — tap to re-run the price check against it. */
+@Composable
+private fun CandidateRow(candidate: ProductCandidate, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                candidate.searchTerm,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+            Text(
+                "${candidate.confidence.name.lowercase()} confidence · ${candidate.via}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            Icons.AutoMirrored.Filled.ArrowForward,
+            contentDescription = "Search this instead",
+            tint = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 
@@ -465,11 +534,19 @@ private fun ResultRow(item: CaptureItem) {
                     Text(status.report.searchTerm, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1)
                     Text("via ${status.via}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text(
-                    Format.money(status.report.averagePrice, status.report.currency),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                if (status.report.soldCount == 0) {
+                    Text(
+                        "No matches",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        Format.money(status.report.averagePrice, status.report.currency),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
             is ItemStatus.Unidentified ->
                 Text("Couldn’t identify this one", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

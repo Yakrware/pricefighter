@@ -22,11 +22,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.pricefighter.data.nano.GenAi
+import com.pricefighter.data.nano.GenAiInfo
 
 @Composable
 fun HowToScreen(contentPadding: PaddingValues, modifier: Modifier = Modifier) {
@@ -81,11 +86,67 @@ fun HowToScreen(contentPadding: PaddingValues, modifier: Modifier = Modifier) {
             }
         }
 
+        AboutCard()
+
         Text(
             "Every lookup is saved in History. All data stays on this device.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp),
+        )
+    }
+}
+
+/**
+ * About — which on-device model is actually running. We never name a model: Android's AICore hands
+ * us whatever Gemini Nano variant the device carries, so the only honest way to report it is to ask
+ * the device (`getBaseModelName()` / `getTokenLimit()`).
+ */
+@Composable
+private fun AboutCard() {
+    val info by produceState<GenAiInfo?>(initialValue = null) { value = GenAi.info() }
+
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.padding(16.dp)) {
+            Text("About", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "On-device AI",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+
+            AboutRow("Backend", info?.backend ?: "Checking…")
+            AboutRow("Status", info?.statusLabel ?: "Checking…")
+            AboutRow("Active model", info?.activeModel ?: "—")
+            AboutRow("Token limit", info?.tokenLimit?.toString() ?: "—")
+
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "The app never picks a model — AICore provides whichever Nano this device carries. " +
+                    "We request the FULL variant (over FAST) so identification and match-filtering " +
+                    "are as accurate as the device allows.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AboutRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.End,
+            modifier = Modifier.padding(start = 16.dp),
         )
     }
 }

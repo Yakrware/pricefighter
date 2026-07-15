@@ -200,9 +200,19 @@ private fun AgentStatus(
             container = MaterialTheme.colorScheme.secondaryContainer,
             content = MaterialTheme.colorScheme.onSecondaryContainer,
             icon = { Icon(Icons.Filled.CheckCircle, contentDescription = null) },
-            message = buildString {
-                append("Priced “${agentState.query}”")
-                append(if (agentState.judgedByNano) " — matches judged by Gemini Nano" else " — matched by keywords")
+            message = if (agentState.soldCount == 0) {
+                "No sold matches for “${agentState.query}” — search saved to history"
+            } else {
+                buildString {
+                    append("Priced “${agentState.query}”")
+                    append(
+                        if (agentState.judgedByNano) {
+                            " — matches judged by Gemini Nano"
+                        } else {
+                            " — matched by keywords"
+                        },
+                    )
+                }
             },
             onDismiss = onDismiss,
             modifier = modifier,
@@ -289,7 +299,12 @@ private fun HistoryRow(
     onDelete: () -> Unit,
 ) {
     val currency = entry.currency
-    val range = "${Format.money(entry.minPrice, currency)} – ${Format.money(entry.maxPrice, currency)}"
+    val noSales = entry.soldCount == 0
+    val range = if (noSales) {
+        "No sold matches"
+    } else {
+        "${Format.money(entry.minPrice, currency)} – ${Format.money(entry.maxPrice, currency)}"
+    }
 
     Card(modifier = Modifier.fillMaxWidth().clickable { onToggle() }) {
         Column(Modifier.padding(16.dp)) {
@@ -319,21 +334,39 @@ private fun HistoryRow(
             AnimatedVisibility(visible = expanded) {
                 Column {
                     Spacer(Modifier.height(12.dp))
-                    Text(
-                        Format.money(entry.averagePrice, currency),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text("average sold price", style = MaterialTheme.typography.bodySmall)
+                    if (noSales) {
+                        Text(
+                            "No sold matches",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "Nothing on eBay's sold results genuinely matched these keywords. " +
+                                "Try a different brand/model wording.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Text(
+                            Format.money(entry.averagePrice, currency),
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text("average sold price", style = MaterialTheme.typography.bodySmall)
+                    }
 
                     Spacer(Modifier.height(12.dp))
                     HorizontalDivider()
                     Spacer(Modifier.height(12.dp))
 
-                    StatRow("Median", Format.money(entry.medianPrice, currency))
-                    StatRow("Range", range)
-                    StatRow("Sold (sample)", entry.soldCount.toString())
-                    StatRow("Velocity (30d)", "${entry.velocityLast30Days} sold")
+                    // The keywords we actually searched — always shown, so a miss is diagnosable.
+                    StatRow("Searched", entry.searchTerm)
+                    if (!noSales) {
+                        StatRow("Median", Format.money(entry.medianPrice, currency))
+                        StatRow("Range", range)
+                        StatRow("Sold (sample)", entry.soldCount.toString())
+                        StatRow("Velocity (30d)", "${entry.velocityLast30Days} sold")
+                    }
                     StatRow("Active listings", entry.activeListings.takeIf { it >= 0 }?.toString() ?: "—")
                     StatRow("Lowest active", Format.money(entry.lowestActivePrice, currency))
 

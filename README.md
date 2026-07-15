@@ -72,10 +72,12 @@ real listings (see "Auto-test").
 Every search carries the **item-condition filter** `LH_ItemCondition` set to all sellable
 conditions — New, Open Box, New-other, every refurbished grade, and Used — which excludes
 the **"For parts or not working" (7000)** condition. This filters by eBay *condition* only —
-empty boxes, broken units listed under a normal condition, and cheap *accessories* (ear pads,
-cables, cases) that match the search term are a separate relevance concern. Those are dropped
-by the **agent's title judgement** (Gemini Nano, with clever prompting) in the multi-tool flow,
-with `MatchHeuristics` as the offline fallback — the raw search results themselves are unfiltered.
+empty boxes, broken units listed under a normal condition, cheap *accessories* (ear pads, cables,
+cases), and **combos/bundles** that sell the item with other hardware (a CPU bundled with a
+motherboard, a console bundled with games — their price isn't the item's price) all match the
+search term and are a separate relevance concern. Those are dropped by the **agent's title
+judgement** (Gemini Nano, with clever prompting) in the multi-tool flow, with `MatchHeuristics` as
+the offline fallback — the raw search results themselves are unfiltered.
 
 **Sold sort & the 30-day window.** Sold searches are sorted by **sold/ended date, most
 recent first** (`_sop=13`), so the recent window sits at the top of page 1 and continues
@@ -134,31 +136,38 @@ Three tabs (bottom navigation):
   reporting progress inline and dropping the saved report at the top of the list. **One card
   is expanded at a time**: the most recent is open by default with full details; the rest
   collapse to a one-line summary (item + price range). Tapping a card opens it and closes the
-  previously open one.
+  previously open one. **Every search is recorded — including one that matched nothing**: a
+  no-match entry shows "No sold matches", the exact keywords under **Searched**, the active-side
+  figures, and the eBay links, so a miss is diagnosable instead of vanishing.
 - **How to** — directions for asking Gemini by voice, text, or photo.
 - **Camera** — a live CameraX preview with a shutter. Snapping a photo identifies the item
   **on-device** and prices it without leaving the app (a loading indicator runs meanwhile).
-  The identifier is a fall-through chain aimed at a **brand + model** eBay can search:
-  1. **Barcode** (ML Kit) → a UPC/EAN, which eBay can search directly.
+  Identification returns a **confidence-ranked list of candidates**, not one guess — auto-detection
+  misses often enough that the result card shows **what it searched** and offers the runners-up
+  under *"Not the right match? Search instead:"*; tapping one re-runs the price check against it.
+  Sources, best first:
+  1. **Barcode** (ML Kit) → a UPC/EAN, which eBay can search directly. Exact, so it's the sole
+     candidate when found.
   2. **Gemini Nano** (ML Kit GenAI Prompt API) → on-device multimodal identification on supported
      devices, and the primary identifier. The item is **OCR'd first (ML Kit)** and that text is
      folded into Nano's prompt — a small model is far better at deciding *which* string is the
-     brand/model versus a serial or store label than at reading it off pixels. If the model isn't
-     downloaded yet (`checkStatus() == DOWNLOADABLE`), the app starts the **one-time model
-     download** (kicked off proactively when the camera opens) and uses Nano once it's `AVAILABLE`;
-     until then it falls through. On a Galaxy Z Fold 7 the download is ~12 MB / a couple seconds
-     (the base model ships with AICore).
-  3. **Labeled identifier** — offline fallback (when Nano is unavailable) that mines the *same*
-     OCR text for an explicitly labeled identifier: a model/part number ("Model", "M/N", "P/N", …)
-     is preferred, else a labeled serial ("S/N", "Serial", …). Unlabeled tokens are never used —
-     the label is what makes it safe to trust, so a random code off the packaging is ignored.
-  4. **Fallback** — if nothing on-device can identify it, hand the photo to the **Gemini app**
+     brand/model versus a serial or store label than at reading it off pixels. Nano is asked for up
+     to three ranked `brand | model | confidence` guesses, with **brand and model kept separate**.
+     If the model isn't downloaded yet (`checkStatus() == DOWNLOADABLE`), the app starts the
+     **one-time model download** (kicked off proactively when the camera opens) and uses Nano once
+     it's `AVAILABLE`; until then it falls through. On a Galaxy Z Fold 7 the download is ~12 MB /
+     a couple seconds (the base model ships with AICore).
+  3. **Labeled identifier** — offline fallback (when Nano is unavailable) and an extra candidate
+     otherwise, mined from the *same* OCR text: a model/part number ("Model", "M/N", "P/N", …) is
+     preferred, else a labeled serial ("S/N", "Serial", …). Unlabeled tokens are never used — the
+     label is what makes it safe to trust, so a random code off the packaging is ignored.
+  4. **Fallback** — if no candidate can be produced, hand the photo to the **Gemini app**
      (`ACTION_SEND` image + prompt, falling back to the system chooser).
 
-  When a tier identifies the item, the app runs its **own** `priceCheck()` (no Gemini round-trip
-  needed) and the report lands in History. Note: Gemini Nano (tier 2) is gated to recent
-  flagship devices and an experimental beta SDK, runs only while the app is foreground
-  (`BACKGROUND_USE_BLOCKED` otherwise), and is not available on the emulator.
+  When a candidate is priced, the app runs its **own** `priceCheck()` (no Gemini round-trip needed)
+  and the report lands in History. Note: Gemini Nano (source 2) is gated to recent flagship devices
+  and an experimental beta SDK, runs only while the app is foreground (`BACKGROUND_USE_BLOCKED`
+  otherwise), and is not available on the emulator.
 
   A **Single | Continuous** selector switches capture modes:
   - **Single** — snap one item; the shot **freezes on screen** while it's identified and
@@ -295,6 +304,35 @@ The four registered function IDs (confirmed in the generated `assets/app_functio
 
 `searchSoldListings` returns raw listings; `buildPriceReport` is the call that saves a finished
 report to the app’s history.
+
+---
+
+## Which model runs, and developing without a Nano device
+
+**The app never names a model.** The ML Kit prompt API has no such parameter — `Generation.getClient()`
+returns whatever Gemini Nano variant **AICore** carries on that device. The only levers it exposes are
+`ModelPreference` (`FAST` / `FULL`) and `ModelReleaseStage` (`STABLE` / `PREVIEW`). We ask for **FULL**,
+since identification and match-filtering accuracy matter more here than latency.
+
+To report rather than guess, the **About card** on the *How to* tab shows the live backend, status,
+**active model** (`getBaseModelName()`) and token limit (`getTokenLimit()`), straight from the device.
+
+### Emulator stand-in (dev only)
+
+Emulators have no AICore, so every Nano-dependent path — photo → ranked brand/model candidates, and
+the agent's match filtering — is dead there and silently degrades to keyword heuristics. Since Nano is
+built on **Gemma**, a debug build can point the *same prompts* at a hosted Gemma so those paths can be
+exercised on an emulator. Put a key in `local.properties` (gitignored):
+
+```properties
+openrouter.api.key=sk-or-...
+openrouter.model=google/gemma-3-27b-it   # optional; must be vision-capable for the photo path
+```
+
+`RemoteGemmaBackend` is hard-gated to **debug build + emulator + key present** — all three, or the app
+uses on-device Nano. Release builds compile the key and model out to empty strings, so it can never
+ship. Note it sends the prompt (and, for identification, the photo) to OpenRouter — an external
+service — which is exactly why it's restricted to emulators.
 
 ---
 

@@ -41,4 +41,27 @@ class MatchHeuristicsTest {
         assertTrue(MatchHeuristics.isJunk("Nintendo Switch For Parts Not Working"))
         assertFalse(MatchHeuristics.isJunk("Sony WH-1000XM5 Excellent Condition"))
     }
+
+    @Test
+    fun dropsProcessorMotherboardCombos() {
+        val listings = listOf(
+            listing("Intel Core i7-9700K Desktop Processor 8 Cores"),
+            listing("Intel Core i7-9700K CPU + MSI Z390 Motherboard Combo"),
+            listing("Intel Core i7-9700K w/ Motherboard and RAM"),
+            listing("Intel Core i7-9700K Bundle with Cooler"),
+        )
+        val kept = MatchHeuristics.byTokenOverlap("Intel Core i7-9700K", listings)
+        assertEquals(1, kept.size)
+        assertEquals("Intel Core i7-9700K Desktop Processor 8 Cores", kept[0].title)
+    }
+
+    @Test
+    fun isBundleIsSymmetricAndSparesPlainListings() {
+        // Searching for the motherboard should drop the same combo a CPU search drops.
+        assertTrue(MatchHeuristics.isBundle("MSI Z390 Motherboard + Intel CPU Combo"))
+        assertTrue(MatchHeuristics.isBundle("Intel i7-9700K CPU + Motherboard"))
+        assertTrue(MatchHeuristics.isBundle("Lot of 5 Intel Processors"))
+        assertFalse(MatchHeuristics.isBundle("Intel Core i7-9700K Desktop Processor"))
+        assertFalse(MatchHeuristics.isBundle("MSI Z390-A Pro Motherboard LGA1151"))
+    }
 }

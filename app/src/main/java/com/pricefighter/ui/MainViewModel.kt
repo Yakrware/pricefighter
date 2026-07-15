@@ -21,8 +21,8 @@ sealed interface AgentUiState {
     /** The agent is running; [step] is the current human-readable stage. */
     data class Working(val step: String) : AgentUiState
 
-    /** Finished — the report is now the newest item in History. */
-    data class Done(val query: String, val judgedByNano: Boolean) : AgentUiState
+    /** Finished — the report is now the newest item in History. [soldCount] is 0 for a no-match search. */
+    data class Done(val query: String, val judgedByNano: Boolean, val soldCount: Int) : AgentUiState
 
     data class Error(val message: String) : AgentUiState
 }
@@ -48,7 +48,8 @@ class MainViewModel(
             runCatching {
                 agent.run(request) { step -> _agentState.value = AgentUiState.Working(step) }
             }.onSuccess { outcome ->
-                _agentState.value = AgentUiState.Done(outcome.query, outcome.judgedByNano)
+                _agentState.value =
+                    AgentUiState.Done(outcome.query, outcome.judgedByNano, outcome.report.soldCount)
             }.onFailure {
                 _agentState.value = AgentUiState.Error(it.message ?: "Something went wrong.")
             }

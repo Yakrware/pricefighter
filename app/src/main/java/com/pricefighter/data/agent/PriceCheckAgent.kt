@@ -48,16 +48,17 @@ class PriceCheckAgent(
         // A single page of the most recent sold listings — a sample small enough for Nano to judge
         // title by title, yet large enough for a representative price picture.
         val sold = repository.searchSold(query, page = 1).listings
-        if (sold.isEmpty()) error("No sold matches found for “$query” — try the exact brand and model.")
         val active = repository.searchActive(query)
 
         progress.onStep("Sorting good matches from bad…")
-        val (matched, judgedByNano) = discardPoorMatches(query, sold)
+        val (matched, judgedByNano) =
+            if (sold.isEmpty()) emptyList<EbayListing>() to false else discardPoorMatches(query, sold)
 
+        // A zero-match search is still saved, so history always shows which keywords were tried.
         progress.onStep("Crunching the numbers…")
         val report = repository.buildAndSaveReport(
             searchTerm = query,
-            soldListings = matched.ifEmpty { sold },
+            soldListings = matched,
             activeListings = active.totalResults,
             lowestActivePrice = active.lowestPrice,
         )
@@ -99,6 +100,9 @@ class PriceCheckAgent(
                 "- broken / for-parts / not-working / repair units\n" +
                 "- accessories and add-ons (case, cover, screen protector, charger, cable, stand, " +
                 "strap, band, skin, mount) and manuals\n" +
+                "- combos, bundles, and multi-item lots that include other hardware — e.g. a CPU " +
+                "sold together with a motherboard, or a console bundled with games. Their price " +
+                "is not the price of \"$query\" alone.\n" +
                 "- a different model, size, or variant than \"$query\"\n" +
                 "Reply with ONLY the numbers to keep, comma-separated.\n$numbered\nKeep:",
             maxOutputTokens = 200,
